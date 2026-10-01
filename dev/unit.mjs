@@ -12,15 +12,20 @@ for (const f of ["engine.ts", "footer.ts", "settings.ts", "types.ts"]) {
 	}
 
 // @earendil-works packages resolve only inside pi (pi aliases them at runtime);
-// standalone we rewrite the bare specifiers to absolute file URLs.
-const PI_PKG = "C:/Users/serge/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent";
+// standalone we rewrite the bare specifiers to absolute file URLs into the
+// installed pi. The location is derived from %APPDATA% (Windows npm layout);
+// set PI_PACKAGE_PATH if your pi lives somewhere else.
+const PI_PKG = (process.env.PI_PACKAGE_PATH
+	?? (process.env.APPDATA
+		? join(process.env.APPDATA, "npm", "node_modules", "@earendil-works", "pi-coding-agent")
+		: "")).replace(/\\/g, "/");
 src = src.replaceAll('from "@earendil-works/pi-coding-agent"', `from "file:///${PI_PKG}/dist/index.js"`);
 src = src.replaceAll('from "@earendil-works/pi-tui"', `from "file:///${PI_PKG}/node_modules/@earendil-works/pi-tui/dist/index.js"`);
 	writeFileSync(join(here, f), src, "utf8");
 }
 const mod = await import('./footer.ts');
-const idWithSlashes = 'llama-server=http://127.0.0.1:9931/E:/LLMs/unsloth/Qwen3.8-Flash-Next-GGUF/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf';
-const idWithBackslashes = 'llama-server=http://127.0.0.1:9931/E:' + String.fromCharCode(92) + 'LLMs' + String.fromCharCode(92) + 'Qwen.gguf';
+const idWithSlashes = 'llama-server=http://127.0.0.1:9931/D:/models/Qwen3.8-Flash-Next-GGUF/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf';
+const idWithBackslashes = 'llama-server=http://127.0.0.1:9931/E:' + String.fromCharCode(92) + 'models' + String.fromCharCode(92) + 'Qwen.gguf';
 console.log('filename (fwd slashes):', mod.modelFileName(idWithSlashes));
 console.log('filename (backslashes):', mod.modelFileName(idWithBackslashes));
 console.log('filename (openrouter):', mod.modelFileName('~z-ai/glm-flash-latest'));

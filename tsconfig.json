@@ -1,16 +1,19 @@
 {
   // Type-checking configuration for pi-status-plus.
   //
-  // IMPORTANT: this file exists only for offline type checking (the command
-  // shown in the README under "Checking your installation"). Pi itself loads
-  // the extension with its own copy of every @earendil-works module, so the
-  // extension runs fine without any of these paths being correct.
+  // IMPORTANT: this file exists only for the optional offline type check (the
+  // command shown in the README under "Checking your installation"). Pi itself
+  // loads the extension with its own copy of every @earendil-works module, so
+  // the extension runs perfectly without any of this being filled in.
   //
-  // The "paths" entries below point straight into an npm-installed copy of pi
-  // on Windows. If your pi lives somewhere else (Linux, macOS, a different
-  // install location, or a source checkout), adjust the three locations to
-  // match: the pi package itself, the pi-tui package nested inside it, and
-  // the @types folder nested inside it. Nothing else needs to change.
+  // To make the type check work, uncomment the "paths" and "typeRoots" blocks
+  // below and adjust the locations to wherever your pi package is installed.
+  // On Windows with a default npm install they resolve under %APPDATA%\npm;
+  // on Linux and macOS, "npm root -g" prints the equivalent folder.
+  //
+  // Tip: the repository's dev tests (dev/smoke.mjs, dev/unit.mjs) locate the
+  // pi package on their own (from %APPDATA%, or the PI_PACKAGE_PATH
+  // environment variable on other systems) and do not need this file at all.
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2023"],
@@ -20,25 +23,25 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "skipLibCheck": true,
-    "types": ["node"],
-    "typeRoots": [
-      "C:/Users/serge/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent/node_modules/@types"
-    ],
-    "paths": {
-      "@earendil-works/pi-coding-agent": [
-        "C:/Users/serge/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
-      ],
-      "@earendil-works/pi-coding-agent/*": [
-        "C:/Users/serge/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent/dist/*"
-      ],
-      "@earendil-works/pi-tui": [
-        "C:/Users/serge/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.d.ts"
-      ],
-      "@earendil-works/pi-tui/*": [
-        "C:/Users/serge/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/*"
-      ]
-    },
-    "noEmit": true
+    "noEmit": true,
+    // "types": ["node"],
+    // "typeRoots": [
+    //   "C:/<your-npm-global-folder>/node_modules/@earendil-works/pi-coding-agent/node_modules/@types"
+    // ],
+    // "paths": {
+    //   "@earendil-works/pi-coding-agent": [
+    //     "C:/<your-npm-global-folder>/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+    //   ],
+    //   "@earendil-works/pi-coding-agent/*": [
+    //     "C:/<your-npm-global-folder>/node_modules/@earendil-works/pi-coding-agent/dist/*"
+    //   ],
+    //   "@earendil-works/pi-tui": [
+    //     "C:/<your-npm-global-folder>/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.d.ts"
+    //   ],
+    //   "@earendil-works/pi-tui/*": [
+    //     "C:/<your-npm-global-folder>/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/*"
+    //   ]
+    // }
   },
   "include": ["index.ts", "engine.ts", "footer.ts", "settings.ts", "types.ts"]
 }
