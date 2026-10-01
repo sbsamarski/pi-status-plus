@@ -1,95 +1,133 @@
 # pi-status-plus
 
-A complete replacement for the status bar of the [pi coding agent](https://github.com/earendil-works/pi-coding-agent), with a focus on honest, readable token and speed statistics for local llama.cpp servers and online models alike.
+A complete replacement for the status bar of the [pi coding agent](https://github.com/earendil-works/pi-coding-agent) — built for honest, readable token and speed statistics, whether you run local llama.cpp servers or online models.
 
-Pi's built-in status bar is fixed. It shows you a percent, it shows you a model name stretched across the whole screen because your local model is identified by its full file path, and if you want to see how fast the model is actually generating, you have to install a separate extension that squeezes one more number into a crowded line. This extension replaces the entire bar with something you fully control: five different layouts, generation and prefill speeds, time to first token, real token counts instead of bare percentages, a working-folder line you can actually turn off, and a one-command switch back to the stock bar whenever you want it.
+Pi's built-in bar is fixed, and it has three habits this extension does away with: it shows only a percentage where you might want the actual token count, it stretches your local model's *full file path* across the screen, and if you want generation speeds you have to bolt on a separate extension that squeezes one more number into a crowded line.
 
-Everything is driven by a single command, `/status-plus`, and every choice is saved and remembered. There is nothing to edit by hand unless you enjoy that sort of thing.
+This extension replaces the whole bar with something you control:
+
+- **Five layouts** — from a single minimal line to two information-dense rows
+- **Generation (TG) and prefill (PP) speeds**, plus **time to first token (TTFT)**
+- **Real token counts** — the context line reads `213.0k/1.0M (20.3%)`, not just a percentage
+- **A working folder you can hide** (or tuck into the corner instead of its own full-width line)
+- **A one-command switch back to the stock bar** — and back again, live, no reload
+
+One command drives everything: `/status-plus`. Every choice is saved and remembered.
+
+---
+
+## Contents
+
+- [What it looks like](#what-it-looks-like)
+- [The five layouts](#the-five-layouts)
+- [Installation](#installation)
+- [Understanding the speeds](#understanding-the-speeds)
+- [Configuration](#configuration)
+- [Where the numbers come from](#where-the-numbers-come-from)
+- [Checking your installation](#checking-your-installation-optional)
+- [FAQ](#faq)
+- [Development](#development)
 
 ---
 
 ## What it looks like
 
-The default layout is called **two-line-a** and it turns the bar into two calm, information-dense lines:
+The default layout, **two-line-a**:
 
 ```
 ↑1.2M, ↓192k, R43.0M, CH98.5%, 213.0k/1.0M (20.3%), auto • ⚡ TG 32.4 t/s • PP 85.7 t/s • 120 tok in 4 s • TTFT 3.50 s • Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf • xhigh
 D:\Projects\demo-agent • 🔌 MCP: 4 servers enabled (5 disabled)
 ```
 
-Let me walk you through what you are looking at, because every piece of it is there for a reason.
+Line by line, here is what you are looking at.
 
-The first line starts with the **token accounting** for the whole session. `↑1.2M` means about 1.2 million prompt tokens have been sent to the model so far, `↓192k` means about 192 thousand tokens have come back, and `R43.0M` is the amount of those prompt tokens that were served from the provider's prompt cache rather than re-processed — which, on a local llama.cpp server with a warm KV-cache, is the reason your second and third question fly. `CH98.5%` is the cache hit rate of the most recent call. Then comes the part most people care about: `213.0k/1.0M (20.3%)` tells you that the conversation currently occupies 213 thousand tokens of a one million token context window, which is 20.3 percent — the actual token count right there, not just a percentage you have to reverse-engineer. The trailing `auto` is pi's own indicator that automatic context compaction is enabled; it appears as its own little item and can be turned off.
+**Line 1 — session accounting:**
 
-After that comes the **speed segment**, introduced by a small lightning bolt so your eye can find it instantly. `TG 32.4 t/s` is the token generation speed, `PP 85.7 t/s` is the prefill (prompt processing) speed, `120 tok in 4 s` tells you the most recent response produced 120 tokens in roughly four seconds of actual generation, and `TTFT 3.50 s` is the time to first token — how long you waited, after sending the request, before the first character appeared. The order of these items, by the way, is deliberate: the two speeds come first because you watch them live, the token count comes second because it summarises the finished response, and TTFT comes last because it explains the wait you already experienced.
+- `↑1.2M` — prompt tokens sent to the model so far
+- `↓192k` — tokens received back
+- `R43.0M` — prompt tokens served from the provider's prompt cache instead of re-processed (with a warm llama.cpp KV-cache this is huge — by design)
+- `CH98.5%` — cache hit rate of the most recent call
+- `213.0k/1.0M (20.3%)` — the conversation's current footprint: actual tokens, context window, percentage
+- `auto` — pi's own indicator that automatic context compaction is on (hideable)
 
-The line ends with the model. Local llama.cpp models are identified by pi with their entire file path, which on a real machine looks like `llama-server=http://127.0.0.1:9931/D:\models\Qwen3.8-Flash-Next-GGUF\Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf` and eats half the screen. By default this extension shows only the file name itself, `Qwen3.8-...gguf`, followed by the thinking level (`xhigh` in the example). Online models like `glm-flash-latest` are shown exactly as they are. If you ever want the full path back, one command restores it.
+**Line 1 — the speed segment** (marked by a lightning bolt so your eye finds it instantly):
 
-The second line holds the two things that would otherwise clutter the first: the **working folder** pi was started from, and the **MCP server summary** (`4 servers enabled, 5 disabled`) borrowed from the MCP adapter's own status line so the information is never lost even though this extension owns the whole footer.
+- `TG 32.4 t/s` — token generation speed
+- `PP 85.7 t/s` — prefill (prompt processing) speed
+- `120 tok in 4 s` — the finished response, summarised
+- `TTFT 3.50 s` — the wait before the first character appeared
 
-And because tastes differ, none of this is set in stone. Every element can be kept, moved, or removed.
+The order is deliberate: you watch the two speeds live, the pair summarises the finished response, and TTFT explains the wait you already felt.
+
+**Line 1 — the model.** Local llama.cpp models are identified by pi with their entire file path (`llama-server=http://…/D:\models\…\Qwen3.8-Flash-Next.gguf`) — enough to eat half a screen. By default this extension shows only the file name, followed by the thinking level (`xhigh` above). Online identifiers like `glm-flash-latest` are shown as-is. One command brings the full path back.
+
+**Line 2 — the leftovers.** The working folder pi was started from, and the MCP summary borrowed from the MCP adapter's own status line — so neither is lost even though this extension owns the whole footer.
+
+And nothing here is set in stone: every element can be kept, moved, or removed.
 
 ---
 
 ## The five layouts
 
-You switch layouts with `/status-plus layout <name>`. The change takes effect immediately — no restart, no reload — and is saved for future sessions. The same is true for switching *to* and *from* the stock bar.
+Switch with `/status-plus layout <name>`. Changes apply immediately (no restart, no reload) and persist.
 
-**`two-line-a` (the default)** — the one shown above. The first line carries the statistics, the speeds, and the model; the second line carries the working folder and the MCP summary. This is the layout to choose if you want everything visible all the time without giving up the MCP information.
-
-**`one-line`** — the whole bar collapses into a single line: statistics, speeds, model, thinking level, and working folder, with the tail of the line right-aligned when it fits. The MCP summary is deliberately absent here; this is the layout for when you want the absolute minimum footprint and don't care about MCP on the bar.
-
-**`two-line-b`** — the layout that stays closest to pi's own design. The first line looks like the stock bar: statistics on the left, model and thinking level right-aligned on the right, but with the improved token format (`213.0k/1.0M (20.3%)` instead of `20.3%/1.0M`). The second line carries the speeds, the MCP summary, and the working folder.
-
-**`status-line`** — the stock footer stays exactly as pi made it, and this extension behaves like a classic status-line extension: it appends one plain line with the speeds and statistics after the MCP information, in the same place the older token-speed extensions used to live. Choose this if you want the new statistics but pi's own bar otherwise untouched. (If you still have a separate token-speed extension installed, disable it first, or you will see two overlapping lines of the same information.)
-
-**`stock`** — the extension steps aside completely and pi's original bar returns, byte for byte. The extension stays enabled in the background and even keeps its measurements running quietly, so when you type `/status-plus layout two-line-a` a moment later, your custom bar comes back instantly with current values. People use this to compare, to take screenshots for bug reports, or simply because some days you want the original.
+- **`two-line-a`** *(default)* — everything on two rows: stats + speeds + model on line 1, working folder + MCP on line 2. The layout to pick if you want it all visible.
+- **`one-line`** — the minimum footprint: a single line with stats, speeds, model, thinking level, and the working folder. No MCP summary.
+- **`two-line-b`** — closest to pi's own design: stats on the left with model/thinking right-aligned like the stock bar (but with the better token format), speeds + MCP + folder on line 2.
+- **`status-line`** — pi's stock footer untouched; this extension appends one plain line with speeds and stats after the MCP info, where the older token-speed extensions lived. (Disable any separate token-speed extension first.)
+- **`stock`** — the extension steps aside completely and pi's original bar returns, byte for byte. It keeps measuring quietly in the background, so switching back is instant and the values are current. Handy for comparing, screenshots, or just some days.
 
 ---
 
 ## Installation
 
-This is a source extension: pi loads it from a folder, and there is nothing to compile.
+A source extension: pi loads it from a folder, nothing to compile.
 
-1. Find pi's extensions folder. It lives inside pi's agent directory, next to your settings and sessions: `~/.pi/agent/extensions/` (on Windows, that is the `.pi\agent\extensions\` folder inside your user profile). If it does not exist yet, create it.
-2. Copy this repository's files there, either into a folder named `pi-status-plus` (keeping `index.ts` at its root) or by cloning:
+1. Find pi's extensions folder — inside pi's agent directory, next to your settings and sessions: `~/.pi/agent/extensions/` (on Windows: the `.pi\agent\extensions\` folder inside your user profile). Create it if needed.
+2. Copy or clone the repository there:
    ```
    cd ~/.pi/agent/extensions
    git clone https://github.com/sbsamarski/pi-status-plus.git
    ```
-3. Restart pi (or run `/reload` if you are already inside a session). You should see the new bar immediately, in the default `two-line-a` layout.
+3. Restart pi (or `/reload`). The new bar appears immediately in the default layout.
 
-That is genuinely all. There is no `npm install`, no build step, and no local `node_modules` folder to maintain — and that is not laziness, it is design. Pi loads extensions through its own module loader, which hands every `@earendil-works` import to pi's own bundled modules. The extension simply never needed its own copy. (The only place those imports matter is the optional offline type check described near the end of this page, and even there the configuration points at your installed pi rather than vendoring anything.)
+That is genuinely all — no `npm install`, no build step, no local `node_modules`. Pi's module loader hands every `@earendil-works` import to pi's own bundled modules, so the extension has nothing to install and nothing to break on a pi update.
 
-The extension is developed and tested against pi 0.87.x on Windows, and it contains nothing Windows-specific — the paths in the examples just happen to be Windows paths. Local models through llama.cpp and ik_llama.cpp servers, and online models through OpenRouter-style providers, are the setups it was built and exercised against, but it reads only standard pi events and standard provider usage numbers, so any provider pi supports will work.
+Tested against pi 0.87.x on Windows; nothing Windows-specific inside. Built and exercised with llama.cpp, ik_llama.cpp, and OpenRouter-style providers — it reads only standard pi events and provider usage reports, so any provider pi supports works.
 
 ---
 
 ## Understanding the speeds
 
-This is the part worth reading slowly, because token speeds are surprisingly easy to measure *wrong*, and most of the confusion people have with status bars comes from three honest but different questions being mixed into one number: how fast is the model writing right now, how fast did it write on average once it started, and why did I wait so long before anything appeared?
+Token speeds are easy to measure *wrong*, and most confusion comes from three honest but different questions getting mixed into one number: how fast is the model writing *right now*, how fast did it write *on average*, and *why did I wait so long* before anything appeared?
 
-Every model response has three moments. The request is sent (`t0`). After a wait, the first token arrives — that wait is the **time to first token**, or TTFT, and it contains everything that happens before generation can begin: the network trip, any provider queue, and the prefill, which is the server reading your prompt. Then tokens flow until the end. The speed during that flowing part is the generation speed; the speed of reading the prompt before it is the prefill speed.
+Every response has three moments:
 
-**TG — the generation speed.** Two calculation styles are available, and the extension lets you choose (`/status-plus tgMode window` or `final`). The `window` style answers "how fast is it going *right now*": it sums the tokens that arrived in the last little while (one second by default, tunable from 100 milliseconds up to a full minute) and divides by the real time they took. This is the number that behaves like the rate llama.cpp prints on its own console while it streams, and it is the one you want while watching a long response being written. The `final` style answers "how fast did it write, overall": the total output tokens of the finished response divided by the time from first token to the end. For a well-behaved server these two agree closely; when they disagree, `final` is the honest average and `window` is the honest *now*.
+```
+request sent (t0) ──► first token ──► end
+        └── TTFT wait ──┘└─ generation ─┘
+```
 
-**PP — the prefill speed.** This one is measured once per response: the number of *new* prompt tokens (the ones that were not already sitting in the cache) divided by the prefill wait. With a warm cache this number can look absurdly high, and that is not a bug — if 99 percent of your prompt was already cached, the server really did read those tokens at memory speed.
+The wait before the first token (network, queue, and the prefill — the server reading your prompt) is **TTFT**. The speed of reading the prompt is **PP**. The speed of writing the response is **TG**.
 
-**The "N tok in S s" pair.** After each response finishes, the bar freezes a summary of it: how many tokens it produced and how long the meaningful part took. Two time bases are available. The default, `statsMode gen`, measures from the first token to the end — generation only — which makes its implied speed identical to `final`-style TG and to llama.cpp's own "eval rate" printout, and identical to the per-response stamps that companion tools like pi-stamp-lite show. The alternative, `statsMode wall`, measures from request to end and therefore *includes* the TTFT wait; it is the style the older token-speed extensions displayed, and it will always read lower than `gen` by exactly the amount of time you spent waiting for the first token. Neither is lying — they answer different questions — but if you want the number that matches the server console, use `gen`.
+- **TG** — two styles, your choice with `tgMode`:
+  - `window` — "how fast right now": tokens from the last little while (1 s default, tunable 100 ms–60 s) over the time they actually took. Behaves like llama.cpp's live console rate.
+  - `final` — "how fast overall": the finished response's output tokens over generation time. The honest average.
+- **PP** — measured once per response: *new* (non-cached) prompt tokens over the prefill wait. With a warm cache it can look absurdly high — correctly so, because those tokens were never re-read.
+- **The "N tok in S s" pair** — the finished response, frozen on the bar. Two time bases via `statsMode`:
+  - `gen` *(default)* — first token to end. Implied speed matches llama.cpp's "eval rate" and per-response stamps from tools like pi-stamp-lite.
+  - `wall` — request to end, *including* the TTFT wait. This is what the older token-speed extensions showed; it always reads lower than `gen` by exactly your TTFT. Neither lies — they answer different questions.
+- **Alignment** — `alignModes match` (default) forces the displayed TG to use the same formula as the displayed pair. With it on, the t/s you see is *always* exactly `N ÷ S` — no exceptions.
 
-**Alignment.** Because the TG number and the pair each have their own style, there is one more switch, `alignModes match` (the default), which forces the displayed TG to use the same formula as the displayed pair. With it on, the t/s you see is *always* exactly the token count divided by the seconds shown — no exceptions, no surprises. Turn it off if you would rather have the raw `window` or `final` number regardless of what the pair says.
+**One honest caveat about live counting.** While a response streams, pi delivers text as a series of events, and not every provider sends exactly one token per event — some pack several tokens into one chunk. The frozen numbers are always exact (they come from the provider's usage report). The live number starts as an estimate and gets smarter: at each response's end the extension measures how many real tokens each event carried, and weights the next response's live counting with that learned ratio. For strict per-token streamers like llama.cpp the ratio is 1.0 and changes nothing.
 
-**One honest caveat about live counting.** While a response streams, pi delivers the text as a series of events, and not every provider sends exactly one token per event — some pack several tokens into one chunk, others trickle single tokens in bursts. The frozen numbers after a response are always exact, because they come from the provider's own usage report. The *live* number during streaming starts from a simple estimate and gets smarter: the extension measures, at the end of every response, how many real tokens each event turned out to carry, and uses that learned ratio to weight the next response's live counting. For strict per-token streamers like llama.cpp the ratio is 1.0 and changes nothing; for chunk-packing providers the live speed converges on the truth after the first response of a session.
-
-One more small honesty note: while a tool call runs (a file read, a shell command), no tokens are being generated by the model, so the timers pause rather than letting the speed decay toward zero; tool-call arguments themselves, which *are* model output, are counted by default and can be excluded.
+Small honesty note: while a tool runs (file read, shell command) no tokens are being generated, so the timers pause instead of decaying toward zero. Tool-call arguments *are* model output and are counted by default.
 
 ---
 
 ## Configuration
 
-Everything is controlled through one command and remembered in a small settings file.
-
-Type `/status-plus` with no arguments inside pi and you get a menu listing every setting with its current value; pick one and, if it has several choices, pick the value you want. Changes are saved the moment you make them. Or skip the menu entirely and use direct commands, which are case-insensitive:
+One command, one settings file. Type `/status-plus` for an interactive menu of every setting with its current value, or use direct commands (case-insensitive):
 
 ```
 /status-plus layout two-line-b        switch the layout
@@ -99,86 +137,99 @@ Type `/status-plus` with no arguments inside pi and you get a menu listing every
 /status-plus status                   print every current setting
 ```
 
-Every setting can also be edited by hand in `~/.pi/agent/pi-status-plus.json` (a documented example ships with this repository as `config-example.json`). Here is what each one does:
+Settings persist in `~/.pi/agent/pi-status-plus.json`; a documented example ships as `config-example.json`.
 
 | Setting | Values (default first) | What it controls |
 | --- | --- | --- |
-| `layout` | `two-line-a`, `one-line`, `two-line-b`, `status-line`, `stock` | The overall shape of the bar, as described above. |
-| `modelDisplay` | `filename`, `full` | Whether local models are shown by file name only or by their full provider-and-path identifier. |
-| `tokenSource` | `provider`, `estimate` | Where the token counts come from: the provider's own usage report (exact) or the extension's own counting (a fallback for providers that under-report). |
-| `tgMode` | `window`, `final` | How the live TG number is computed: a moving average over the last few seconds, or output over generation time. Only matters when `alignModes` is `off`. |
-| `statsMode` | `gen`, `wall` | The time base of the "N tok in S s" pair: generation only, or the whole request including the wait. |
-| `alignModes` | `match`, `off` | Whether the displayed TG is forced to agree with the displayed pair. |
-| `tgWindowMs` | `1000` (100–60000) | The length of the moving average for `window`-style TG. Longer is smoother but slower to react. |
-| `refreshMs` | `500` (100–10000) | How often the bar's numbers refresh. Everything renders on pi's frames, but the values settle into this cadence instead of flickering with every arriving fragment; end-of-response values always appear immediately. |
-| `showStats` | `on` / `off` | Whether the "N tok in S s" pair appears at all. |
-| `showTtft` | `on` / `off` | Whether TTFT appears. |
-| `showPp` | `on` / `off` | Whether the prefill speed appears. |
-| `showAuto` | `on` / `off` | Whether the auto-compact indicator appears in the context display. |
-| `showCwd` | `on` / `off` | Whether the working folder appears (in whichever position the layout gives it). |
-| `showMcp` | `on` / `off` | Whether the MCP summary appears. |
-| `showIcon` | `on` / `off` | Whether the lightning bolt precedes the speeds. |
-| `showSpeedLabels` | `on` / `off` | Whether the speeds are labelled `TG`/`PP` or shown as bare numbers. |
-| `hideStatusLine` | `on` / `off` | In layouts where the footer already shows everything, keep the extension's own status line out of pi's status area. |
-| `countToolCalls` | `on` / `off` | Whether tool-call arguments (which are model output too) count toward TG. |
-| `pauseDuringTools` | `on` / `off` | Whether timers pause while a non-generation tool runs, so the speed does not decay during file reads and shell commands. |
+| `layout` | `two-line-a`, `one-line`, `two-line-b`, `status-line`, `stock` | The overall shape of the bar |
+| `modelDisplay` | `filename`, `full` | Local models by file name only, or full provider-and-path identifier |
+| `tokenSource` | `provider`, `estimate` | Token counts from the provider's usage report (exact) or the extension's own counting |
+| `tgMode` | `window`, `final` | Live TG formula (only matters when `alignModes` is `off`) |
+| `statsMode` | `gen`, `wall` | The "N tok in S s" time base |
+| `alignModes` | `match`, `off` | Force the displayed TG to agree with the displayed pair |
+| `tgWindowMs` | `1000` (100–60000) | Moving-average length for `window` TG — longer is smoother, slower to react |
+| `refreshMs` | `500` (100–10000) | How often the numbers refresh; end-of-response values always appear immediately |
+| `showStats` / `showTtft` / `showPp` | `on` / `off` | Show the pair / TTFT / prefill speed |
+| `showAuto` | `on` / `off` | The auto-compact indicator in the context display |
+| `showCwd` | `on` / `off` | The working folder (in the position the layout gives it) |
+| `showMcp` | `on` / `off` | The MCP summary |
+| `showIcon` / `showSpeedLabels` | `on` / `off` | The lightning bolt / the `TG`-`PP` labels |
+| `hideStatusLine` | `on` / `off` | Keep the extension's own status line out of pi's status area when the footer shows everything |
+| `countToolCalls` | `on` / `off` | Tool-call arguments (model output too) count toward TG |
+| `pauseDuringTools` | `on` / `off` | Pause timers during non-generation tools |
 
-A few design choices deserve a sentence of explanation. The working folder can be hidden entirely because pi shows it on its own full-width line by default, which many people (the author included) find wasteful; here it tucks into the corner of the bar instead. The MCP summary is *read* from the MCP adapter's status line rather than recomputed, which means this extension never talks to your MCP servers at all — it simply relays what the adapter already published, and if the adapter is absent the segment politely disappears. And the model name is shortened only for local models whose identifier is a file path; online model identifiers are left untouched because they carry no path to remove.
+Three design choices, explained:
+
+- The **working folder** hides entirely because pi gives it a full-width line by default, which many people find wasteful — here it tucks into a corner instead.
+- The **MCP summary** is *read* from the MCP adapter's status line, not recomputed — the extension never talks to your MCP servers, and if the adapter is absent the segment politely disappears.
+- The **model name** is shortened only for local models whose identifier is a file path; online identifiers carry no path, so they are left alone.
 
 ---
 
-## What the numbers come from (and what they cannot know)
+## Where the numbers come from
 
-Everything this extension displays is derived from events that pi itself sees: when a request begins, when each piece of text arrives, and when the response ends with the provider's official usage report attached. Pi never receives llama.cpp's internal timing blocks, so no extension can quote the server's exact internal counters — instead this extension measures the same moments you would time with a stopwatch and reconciles its running tally against the provider's token report at the end of every response. The frozen numbers after a response are exact by construction. The live numbers during streaming are estimates that converge, as described above.
+Everything is derived from events pi itself sees: request start, each arriving piece of text, and the response end with the provider's official usage report.
 
-The practical consequence for llama.cpp and ik_llama.cpp users: the frozen TG after a response matches what the server prints as its eval rate (when `statsMode` is `gen`), and the PP figure reflects the genuinely new prompt tokens rather than cached ones, which is why it can legitimately exceed the server's cold-prefill numbers after your context warms up.
+- Pi never receives llama.cpp's internal timing blocks — no extension can quote the server's exact internal counters. Instead, the same moments are measured you would time with a stopwatch, and the running tally is reconciled against the provider's token report at every response end.
+- **The frozen numbers after a response are exact by construction.** The live numbers are estimates that converge, as described above.
+- For llama.cpp / ik_llama.cpp users: the frozen TG matches the server's eval rate (with `statsMode gen`), and PP reflects genuinely *new* prompt tokens — which is why it can legitimately exceed the server's cold-prefill numbers once your context warms up.
 
 ---
 
 ## Checking your installation (optional)
 
-The repository ships with two small self-tests that run outside pi. They verify the speed mathematics and render every layout with simulated data, without needing a model or a running pi:
+Two small self-tests run outside pi — no model, no running pi needed:
 
 ```
 node --experimental-strip-types --no-warnings dev/smoke.mjs
 node --experimental-strip-types --no-warnings dev/unit.mjs
 ```
 
-The tests locate your installed pi automatically: on Windows they derive it from `%APPDATA%` (the npm global folder), and on any other system — or any unusual install location — set an environment variable `PI_PACKAGE_PATH` pointing at the pi package folder before running them.
+They locate your installed pi on their own (from `%APPDATA%` on Windows; elsewhere set `PI_PACKAGE_PATH` to the pi package folder).
 
-If you also want a full strict type check, open `tsconfig.json` once: it ships with a commented-out `paths` block at the bottom, which you uncomment and adjust to wherever your pi is installed (the same three locations the tests use). Then run, on Windows:
+For a full strict type check, uncomment the `paths` block at the bottom of `tsconfig.json` and point it at your pi install, then:
 
 ```
 node "%APPDATA%\npm\node_modules\typescript\bin\tsc" -p tsconfig.json
 ```
 
-(on Linux and macOS, `npm root -g` tells you the equivalent global folder). Until you fill in those paths, the type check will report the pi imports as unresolved — that is expected, and the extension itself runs fine either way, because pi injects its own modules at load time.
-
-Both self-tests need Node 22.6 or newer (for native TypeScript stripping) and stage temporary copies of the sources with resolved imports, cleaning up after themselves.
+Until then the type check reports the pi imports as unresolved — expected, and harmless: pi injects its own modules at load time. Both tests need Node 22.6+ (native TypeScript stripping) and clean up after themselves.
 
 ---
 
-## Frequently asked questions
+## FAQ
 
-**The speed segment is empty — is it broken?** No. There is nothing to measure until the first response of the session has been generated. TG appears the moment text starts flowing; PP and the token pair appear once that response completes and the provider's usage report arrives. After that the last measured values stay on the bar permanently instead of dropping to zero.
+- **The speed segment is empty — is it broken?**
+  No. Nothing has been measured yet. TG appears the moment text starts flowing; PP and the pair appear when the response completes. Afterwards the last values stay on the bar permanently.
 
-**Why is my live TG different from the frozen TG of the same response?** The live number is a moving average of recent events (an estimate while streaming); the frozen number is computed from the provider's exact usage report. With `alignModes match` and `statsMode gen` the frozen TG equals the frozen pair's implied speed to the digit, and both match the server console's eval rate.
+- **Why is my live TG different from the frozen TG of the same response?**
+  Live = a moving average of recent events (an estimate). Frozen = the provider's exact usage report. With `alignModes match` + `statsMode gen` the frozen TG equals the frozen pair's implied speed to the digit, and matches the server console's eval rate.
 
-**Why is the pair's implied speed lower than the stamps or console?** You are almost certainly in `statsMode wall`, which includes the prefill wait in the seconds. Switch to `gen` if you want generation-only. Wall is not wrong — it just answers "how fast did the whole round trip go" instead of "how fast did the model write".
+- **Why is the pair's implied speed lower than the stamps or the console?**
+  You are in `statsMode wall`, which includes the prefill wait in the seconds. Switch to `gen` for generation-only. Wall is not wrong — it answers "how fast did the whole round trip go" instead of "how fast did the model write".
 
-**Does it work with ik_llama.cpp? OpenRouter? Anthropic?** It reads only what pi sees, so any provider works. The speed semantics were designed and verified against llama.cpp, ik_llama.cpp, and OpenRouter-style endpoints.
+- **Does it work with ik_llama.cpp? OpenRouter? Anthropic?**
+  It reads only what pi sees, so any provider works. The speed semantics were designed and verified against llama.cpp, ik_llama.cpp, and OpenRouter-style endpoints.
 
-**Can I run it alongside the older token-speed extension?** In the footer layouts, yes but pointlessly — they would duplicate the same line. In `status-line` layout, no: disable the other one first.
+- **Can I run it alongside the older token-speed extension?**
+  With the footer layouts: yes, but pointlessly — the same line twice. With `status-line`: no, disable the other one first.
 
-**Pi updated and the bar still works — why?** Because pi injects its own modules into extensions at load time. The extension has no dependencies to break on a pi update. Only the optional offline type check cares about where pi is installed.
+- **Pi updated and the bar still works — why?**
+  Pi injects its own modules into extensions at load time; there are no dependencies to break. Only the optional type check cares where pi is installed.
 
 ---
 
 ## Development
 
-The whole extension is a handful of small TypeScript files with one job each: `index.ts` wires pi's events and commands to everything else, `engine.ts` measures and computes all speeds from those events, `footer.ts` turns numbers into the lines you see, `settings.ts` owns the configuration file, and `types.ts` holds the shared shapes. If you want to change what appears on the bar, `footer.ts` is where you look; if you want to change how a speed is computed, `engine.ts`.
+A handful of small files, one job each:
 
-The `dev/` folder contains the two self-tests described above. They are deliberately boring: fake pi, simulated streams with known token counts, and printed assertions — so that a change to the math can be verified in seconds without a model running.
+- `index.ts` — wires pi's events and commands to everything else
+- `engine.ts` — measures and computes all speeds from those events
+- `footer.ts` — turns numbers into the lines you see
+- `settings.ts` — owns the configuration file
+- `types.ts` — shared shapes
+
+The `dev/` folder holds the two self-tests: fake pi, simulated streams with known token counts, printed assertions — so a change to the math verifies in seconds without a model running.
 
 Ideas, bug reports, and pull requests are welcome at the issue tracker.
 
@@ -186,4 +237,4 @@ Ideas, bug reports, and pull requests are welcome at the issue tracker.
 
 ## License
 
-[MIT](LICENSE) — do whatever you like with it, no warranty, credit appreciated but not required.
+[MIT](LICENSE) — do whatever you like, no warranty, credit appreciated but not required.
