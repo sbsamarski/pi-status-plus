@@ -1,0 +1,20 @@
+{
+	"layout": "two-line-a",
+	"showStats": true,
+	"showTtft": true,
+	"showPp": true,
+	"showAuto": true,
+	"showCwd": true,
+	"showMcp": true,
+	"showIcon": true,
+	"showSpeedLabels": true,
+	"hideStatusLine": true,
+	"modelDisplay": "filename",
+	"tokenSource": "provider",
+	"tgMode": "window",
+	"statsMode": "gen",
+	"alignModes": "match",
+	"countToolCalls": true,
+	"pauseDuringTools": true,
+	"tgWindowMs": 1000
+}

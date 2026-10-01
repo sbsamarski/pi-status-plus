@@ -1,0 +1,37 @@
+{
+  "name": "pi-status-plus",
+  "version": "1.0.0",
+  "description": "A complete replacement for the pi coding agent status bar: five selectable layouts, generation and prefill token speeds, time-to-first-token, token and context accounting, filename-only model display, and a stock fallback that switches live.",
+  "type": "module",
+  "license": "MIT",
+  "author": {
+    "name": "sbsamarski",
+    "url": "https://github.com/sbsamarski"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sbsamarski/pi-status-plus.git"
+  },
+  "homepage": "https://github.com/sbsamarski/pi-status-plus#readme",
+  "bugs": "https://github.com/sbsamarski/pi-status-plus/issues",
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "status bar",
+    "statusline",
+    "footer",
+    "tokens",
+    "tokens-per-second",
+    "ttft",
+    "llama.cpp",
+    "ik_llama.cpp"
+  ],
+  "private": true,
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

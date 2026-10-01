@@ -1,0 +1,6 @@
+# Nothing here needs to be ignored today — the project deliberately ships
+# without a node_modules folder (pi injects its own modules at runtime).
+# Kept for completeness in case local tooling adds temporary artifacts.
+node_modules/
+*.staged.ts
+*.log
