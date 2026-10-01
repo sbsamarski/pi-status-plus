@@ -122,7 +122,8 @@ export function buildSpeedSegment(data: FooterFrameData): string {
 	}
 	if (s.showStats && speed.statsTokens > 0) {
 		const seconds = speed.statsSeconds;
-		parts.push(seconds > 0 ? `${speed.statsTokens} tok in ${Math.round(seconds)} s` : `${speed.statsTokens} tok`);
+		const tokens = Math.round(speed.statsTokens);
+		parts.push(seconds > 0 ? `${tokens} tok in ${Math.round(seconds)} s` : `${tokens} tok`);
 	}
 	if (s.showTtft && speed.ttft > 0) parts.push(`TTFT ${speed.ttft.toFixed(2)} s`);
 

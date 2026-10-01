@@ -185,13 +185,35 @@ function engineSnapshot(): SpeedSnapshot {
 // Footer frame
 // ---------------------------------------------------------------------------
 
-function buildFrame(ctx: ExtensionContext, width: number, theme: FooterFrameData["theme"]): FooterFrameData {
+/**
+ * Display refresh throttle. Rendering itself happens on every pi frame, but
+ * the numbers feeding the bar are recomputed at most once per refreshMs, so
+ * fast-changing values (live TG, TTFT, the tok-in-s pair) settle into a calm
+ * half-second cadence instead of flickering with every delta. End-of-stream
+ * updates (message_end, turn_end, agent_end) bypass the throttle so the
+ * frozen authoritative values appear immediately.
+ */
+let displayCache: { at: number; stats: UsageStats; speed: SpeedSnapshot } | undefined;
+
+function refreshDisplayCache(ctx: ExtensionContext): void {
+	displayCache = { at: Date.now(), stats: computeStats(ctx), speed: engineSnapshot() };
+}
+
+function currentDisplayData(ctx: ExtensionContext, force: boolean): { stats: UsageStats; speed: SpeedSnapshot } {
+	const now = Date.now();
+	if (!force && displayCache && now - displayCache.at < settings.refreshMs) return displayCache;
+	refreshDisplayCache(ctx);
+	return displayCache!;
+}
+
+function buildFrame(ctx: ExtensionContext, width: number, theme: FooterFrameData["theme"], force = false): FooterFrameData {
+	const data = currentDisplayData(ctx, force);
 	return {
 		ctx,
 		theme,
 		settings: settings as FooterFrameData["settings"],
-		stats: computeStats(ctx),
-		speed: engineSnapshot(),
+		stats: data.stats,
+		speed: data.speed,
 		branch: footerDataRef?.getGitBranch() ?? null,
 		mcpSegment: stripAnsi(footerDataRef?.getExtensionStatuses().get("mcp") ?? ""),
 		width,
@@ -219,9 +241,9 @@ function composeStatsLinePlain(parts: StatsParts): string {
 // Line builders per layout
 // ---------------------------------------------------------------------------
 
-function buildLines(ctx: ExtensionContext, width: number, theme: FooterFrameData["theme"]): string[] {
+function buildLines(ctx: ExtensionContext, width: number, theme: FooterFrameData["theme"], force = false): string[] {
 	const safeWidth = Math.max(width, MIN_WIDTH);
-	const data = buildFrame(ctx, safeWidth, theme);
+	const data = buildFrame(ctx, safeWidth, theme, force);
 	const s = settings;
 	const lines: string[] = [];
 
@@ -346,16 +368,20 @@ function applyLayout(ctx: ExtensionContext): void {
 // setStatus line (status-line layout, or fallback when no footer is possible)
 // ---------------------------------------------------------------------------
 
-function buildStatusLineText(ctx: ExtensionContext): string {
-	const lines = buildLines(ctx, LINE_FALLBACK_WIDTH, ctx.ui.theme);
+function buildStatusLineText(ctx: ExtensionContext, force = false): string {
+	const lines = buildLines(ctx, LINE_FALLBACK_WIDTH, ctx.ui.theme, force);
 	return lines.join(" • ");
 }
 
-function updateStatusLine(ctx: ExtensionContext): void {
+let lastStatusText: string | undefined;
+
+function updateStatusLine(ctx: ExtensionContext, force = false): void {
 	if (footerInstalled && settings.layout !== "status-line" && settings.hideStatusLine) return;
 	try {
-		const text = buildStatusLineText(ctx);
-		ctx.ui.setStatus(STATUS_KEY, text.length > 0 ? text : undefined);
+		const text = buildStatusLineText(ctx, force);
+		if (text === lastStatusText && !force) return;
+		lastStatusText = text.length > 0 ? text : undefined;
+		ctx.ui.setStatus(STATUS_KEY, lastStatusText);
 	} catch {
 		/* stale ctx — ignore */
 	}
@@ -372,7 +398,7 @@ export default function (pi: ExtensionAPI): void {
 		activeCtx = ctx;
 		footerInstalled = false;
 		applyLayout(ctx);
-		updateStatusLine(ctx);
+		updateStatusLine(ctx, true);
 	});
 
 	pi.on("session_shutdown", () => {
@@ -385,6 +411,8 @@ export default function (pi: ExtensionAPI): void {
 		activeCtx = undefined;
 		footerDataRef = undefined;
 		footerInstalled = false;
+		displayCache = undefined;
+		lastStatusText = undefined;
 	});
 
 	// --- streaming ----------------------------------------------------------
@@ -416,6 +444,9 @@ export default function (pi: ExtensionAPI): void {
 		const usage = (event.message as { usage?: EntryUsage }).usage;
 		if (usage) engine.reconcile(usage.output ?? 0, usage.input ?? 0);
 		engine.stop(Date.now());
+		// The authoritative end-of-stream values bypass the refresh throttle, so
+		// the very next footer render already shows the frozen numbers.
+		if (activeCtx) refreshDisplayCache(activeCtx);
 	});
 
 	// Pause while a non-generation tool executes (its tokens are prompt
@@ -430,11 +461,13 @@ export default function (pi: ExtensionAPI): void {
 	// --- status line refresh points ----------------------------------------
 	pi.on("agent_end", (_event: AgentEndEvent, ctx: ExtensionContext) => {
 		engine.stop(Date.now());
-		updateStatusLine(ctx);
+		refreshDisplayCache(ctx);
+		updateStatusLine(ctx, true);
 	});
 
 	pi.on("turn_end", (_event: TurnEndEvent, ctx: ExtensionContext) => {
-		updateStatusLine(ctx);
+		refreshDisplayCache(ctx);
+		updateStatusLine(ctx, true);
 	});
 
 	// --- command ------------------------------------------------------------
@@ -456,6 +489,7 @@ function findField(name: string): string | undefined {
 	for (const key of BOOL_KEYS_LIST) if (key.toLowerCase() === lower) return key;
 	for (const key of ENUM_FIELDS) if (key.toLowerCase() === lower) return key;
 	if ("tgwindow" === lower) return "tgWindowMs";
+	if ("refresh" === lower) return "refreshMs";
 	return undefined;
 }
 
@@ -525,6 +559,18 @@ async function handleCommand(args: string, ctx: ExtensionCommandContext): Promis
 		return;
 	}
 
+	// refreshMs.
+	if (head === "refreshMs") {
+		const value = Number(words[1]);
+		if (words[1] === undefined || !Number.isFinite(value) || value < 100 || value > 10000) {
+			ctx.ui.notify(`refresh needs a number from 100 to 10000 ms (now ${settings.refreshMs})`, "warning");
+			return;
+		}
+		settings.refreshMs = Math.round(value);
+		commit(ctx, `refreshMs → ${settings.refreshMs}`);
+		return;
+	}
+
 	ctx.ui.notify(`unknown field "${words[0]}" — try /status-plus (menu) or /status-plus status`, "warning");
 }
 
@@ -561,6 +607,7 @@ function settingsSummary(): string {
 	for (const key of ENUM_FIELDS) parts.push(`${key}=${String(s[key])}`);
 	for (const key of BOOL_KEYS_LIST) parts.push(`${key}=${s[key] ? "on" : "off"}`);
 	parts.push(`tgWindowMs=${s.tgWindowMs}`);
+	parts.push(`refreshMs=${s.refreshMs}`);
 	return `pi-status-plus: ${parts.join(", ")}`;
 }
 
@@ -569,6 +616,7 @@ async function runMenu(ctx: ExtensionCommandContext): Promise<void> {
 	const fields: { key: string; label: string }[] = [
 		...ENUM_FIELDS.map((key: EnumField) => ({ key, label: key })),
 		{ key: "tgWindowMs", label: "tgWindowMs" },
+		{ key: "refreshMs", label: "refreshMs" },
 		...BOOL_KEYS_LIST.map((key: BoolKey) => ({ key, label: key })),
 	];
 
@@ -603,6 +651,18 @@ async function runMenu(ctx: ExtensionCommandContext): Promise<void> {
 			commit(ctx, `tgWindowMs → ${settings.tgWindowMs}`);
 			continue;
 		}
+		if (key === "refreshMs") {
+			const text = await ctx.ui.input("refreshMs (100-10000 ms)", String(settings.refreshMs));
+			if (text === undefined) continue;
+			const value = Number(text.trim());
+			if (!Number.isFinite(value) || value < 100 || value > 10000) {
+				ctx.ui.notify("needs a number from 100 to 10000", "warning");
+				continue;
+			}
+			settings.refreshMs = Math.round(value);
+			commit(ctx, `refreshMs → ${settings.refreshMs}`);
+			continue;
+		}
 		if ((ENUM_FIELDS as readonly string[]).includes(key)) {
 			const enumKey = key as EnumField;
 			const picked = await ctx.ui.select(field.label, [...ENUM_CHOICES[enumKey]!]);
@@ -621,7 +681,8 @@ async function runMenu(ctx: ExtensionCommandContext): Promise<void> {
 
 function paint(ctx: ExtensionContext): void {
 	// With the custom footer installed, pi re-renders it on its own loop; the
-	// setStatus line needs explicit updates.
+	// setStatus line needs explicit updates. Both are throttled by the shared
+	// display cache, so the bar never updates faster than refreshMs.
 	if (!footerInstalled || settings.layout === "status-line") {
 		updateStatusLine(ctx);
 	}

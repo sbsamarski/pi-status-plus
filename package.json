@@ -1,6 +1,6 @@
 {
   "name": "pi-status-plus",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A complete replacement for the pi coding agent status bar: five selectable layouts, generation and prefill token speeds, time-to-first-token, token and context accounting, filename-only model display, and a stock fallback that switches live.",
   "type": "module",
   "license": "MIT",

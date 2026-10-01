@@ -178,6 +178,27 @@ for (const line of component.render(80)) console.log(`|${clean(line)}|`);
 console.log("--- very narrow (46 cols) ---");
 for (const line of component.render(46)) console.log(`|${clean(line)}|`);
 
+console.log("\n=== refresh throttle check ===");
+await fire("session_start", {}, ctx);
+commands.get("status-plus").handler("layout two-line-a", ctx);
+await new Promise((resolve) => setTimeout(resolve, 20));
+await fire("message_start", { message: { role: "assistant", timestamp: Date.now() } }, ctx);
+await fire("message_update", { assistantMessageEvent: { type: "thinking_start" } }, ctx);
+await fire("message_update", { assistantMessageEvent: { type: "thinking_delta", delta: "x" } }, ctx);
+const r1 = footerActive(120).join("|");
+await new Promise((resolve) => setTimeout(resolve, 100));
+await fire("message_update", { assistantMessageEvent: { type: "thinking_delta", delta: "x" } }, ctx);
+const r2 = footerActive(120).join("|");
+console.log("render identical within 500ms:", r1 === r2 ? "PASS" : `FAIL\n  r1=${clean(r1)}\n  r2=${clean(r2)}`);
+await new Promise((resolve) => setTimeout(resolve, 600));
+await fire("message_update", { assistantMessageEvent: { type: "thinking_delta", delta: "x" } }, ctx);
+const r3 = footerActive(120).join("|");
+console.log("render changed after 600ms:", r3 !== r1 ? "PASS" : "FAIL");
+await fire("message_end", { message: { role: "assistant", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0 }, totalTokens: 5 } } }, ctx);
+await fire("turn_end", {}, ctx);
+const r4 = footerActive(120).join("|");
+console.log("frozen values right after end:", clean(r4).includes("5 tok in") ? "PASS" : `FAIL: ${clean(r4)}`);
+
 console.log("\n=== settings summary ===");
 commands.get("status-plus").handler("status", ctx);
 

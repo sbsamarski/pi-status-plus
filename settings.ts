@@ -69,6 +69,8 @@ export interface StatusPlusSettings {
 	pauseDuringTools: boolean;
 	/** TG window length in ms (tgMode "window"). */
 	tgWindowMs: number;
+	/** How often the bar's numbers may refresh, in ms. */
+	refreshMs: number;
 }
 
 export const DEFAULTS: StatusPlusSettings = {
@@ -90,6 +92,7 @@ export const DEFAULTS: StatusPlusSettings = {
 	countToolCalls: true,
 	pauseDuringTools: true,
 	tgWindowMs: 1000,
+	refreshMs: 500,
 };
 
 const LAYOUTS = ["one-line", "two-line-a", "two-line-b", "status-line", "stock"] as const;
@@ -137,6 +140,12 @@ function clampWindow(value: unknown): number {
 	return Math.min(60000, Math.max(100, Math.round(num)));
 }
 
+/** Validate refreshMs into a sane range. */
+function clampRefresh(value: unknown): number {
+	const num = typeof value === "number" && Number.isFinite(value) ? value : DEFAULTS.refreshMs;
+	return Math.min(10000, Math.max(100, Math.round(num)));
+}
+
 export function loadSettings(agentDir: string): StatusPlusSettings {
 	const settings: StatusPlusSettings = { ...DEFAULTS };
 	try {
@@ -152,6 +161,7 @@ export function loadSettings(agentDir: string): StatusPlusSettings {
 			if (typeof value === "boolean") settings[key] = value;
 		}
 		if (raw.tgWindowMs !== undefined) settings.tgWindowMs = clampWindow(raw.tgWindowMs);
+		if (raw.refreshMs !== undefined) settings.refreshMs = clampRefresh(raw.refreshMs);
 	} catch {
 		/* first run or unreadable file: defaults */
 	}

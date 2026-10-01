@@ -16,5 +16,6 @@
 	"alignModes": "match",
 	"countToolCalls": true,
 	"pauseDuringTools": true,
-	"tgWindowMs": 1000
+	"tgWindowMs": 1000,
+	"refreshMs": 500
 }
