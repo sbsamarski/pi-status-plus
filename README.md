@@ -115,7 +115,7 @@ The wait before the first token (network, queue, and the prefill — the server 
   - `final` — "how fast overall": the finished response's output tokens over generation time. The honest average.
 - **PP** — measured once per response: *new* (non-cached) prompt tokens over the prefill wait. With a warm cache it can look absurdly high — correctly so, because those tokens were never re-read.
 - **The "N tok in S s" pair** — the finished response, frozen on the bar. Two time bases via `statsMode`:
-  - `gen` *(default)* — first token to end. Implied speed matches llama.cpp's "eval rate" and per-response stamps from tools like pi-stamp-lite.
+  - `gen` *(default)* — first token to end. Implied speed matches llama.cpp's "eval rate" and per-response stamps from tools like pi-stamp-plus.
   - `wall` — request to end, *including* the TTFT wait. This is what the older token-speed extensions showed; it always reads lower than `gen` by exactly your TTFT. Neither lies — they answer different questions.
 - **Alignment** — `alignModes match` (default) forces the displayed TG to use the same formula as the displayed pair. With it on, the t/s you see is *always* exactly `N ÷ S` — no exceptions.
 
@@ -238,3 +238,6 @@ Ideas, bug reports, and pull requests are welcome at the issue tracker.
 ## License
 
 [MIT](LICENSE) — do whatever you like, no warranty, credit appreciated but not required.
+> **Note on `tsconfig.json`:** it exists only for optional type-checking on the maintainer's machine
+> (its `paths` entries point at the maintainer's global pi install). It is never used at runtime and
+> does not affect loading, running, or installing this extension on another computer.
