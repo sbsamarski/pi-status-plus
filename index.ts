@@ -150,6 +150,28 @@ function computeStats(ctx: ExtensionContext): UsageStats {
 	const used = ctx.getContextUsage?.();
 	stats.contextTokens = used?.tokens ?? null;
 	if (used?.contextWindow) stats.contextWindow = used.contextWindow;
+	// A local server TRUNCATES over-window prompts, so the provider-reported usage is the
+	// truncated size, masking the session's real content (2026-10-04: 140k shown, ~375k real).
+	// Take the max of pi's number and the chars/4 estimate of the projected messages.
+	let projected = 0;
+	try {
+		const projection = ctx.sessionManager?.buildSessionProjection?.();
+		for (const entry of projection?.entries ?? []) {
+			for (const message of entry.messages ?? []) {
+				const content = message.content;
+				const chars = typeof content === "string"
+					? content.length
+					: Array.isArray(content)
+						? content.reduce((acc: number, b: any) => acc + (typeof b?.text === "string" ? b.text.length : typeof b?.thinking === "string" ? b.thinking.length : typeof b?.arguments === "object" ? JSON.stringify(b.arguments ?? {}).length : 0), 0)
+						: 0;
+				projected += chars;
+			}
+		}
+	} catch {
+		/* the estimate is best-effort */
+	}
+	const projectedTokens = Math.ceil(projected / 4);
+	if (projectedTokens > (stats.contextTokens ?? 0)) stats.contextTokens = projectedTokens;
 	return stats;
 }
 
