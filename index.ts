@@ -7,7 +7,7 @@
  * (ctx.ui.setFooter), so every line is under our control.
  *
  * Layouts (/status-plus layout <name>):
- *   one-line    — "↑…, ↓…, R…, CH…%, 70.3k/90k (78.1%, auto), 402 tok in 8.4 s ⚡ TG xx t/s • PP yy t/s • TTFT zz s • model.gguf • xhigh • folder"
+ *   one-line    — "↑…, ↓…, R…, CH…%, 106.4k/260.0k, 40.9%, auto • ⚡ basalt • TG xx t/s • PP yy t/s • TTFT zz s • model.gguf • xhigh • folder"
  *                 (single line, right-aligned tail, no MCP info)
  *   two-line-a  — line 1: one-line content minus folder (folder+MCP on line 2)
  *                 line 2: "folder • 🔌 MCP: N servers enabled (M disabled)"
@@ -47,6 +47,7 @@ import {
 import { truncateToWidth, visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
 
 import { SpeedEngine } from "./engine.js";
+import { EngineProbe } from "./engines.js";
 import {
 	assembleLine,
 	buildRightPart,
@@ -80,6 +81,8 @@ const TOKEN_GEN_TOOLS = new Set(["edit", "write"]);
 // ---------------------------------------------------------------------------
 
 const engine = new SpeedEngine();
+/** Reads speeds from the local engine (basalt / strata / llama.cpp …) when reachable. */
+const probe = new EngineProbe();
 let settings: StatusPlusSettings = { ...DEFAULTS };
 let footerDataRef: ReadonlyFooterDataProvider | undefined;
 let activeCtx: ExtensionContext | undefined;
@@ -146,6 +149,23 @@ function computeStats(ctx: ExtensionContext): UsageStats {
 			addUsage(stats, (entry as { usage?: EntryUsage }).usage);
 		}
 	}
+	// What the SERVER holds: the last real usage report after the newest compaction. This is the
+	// context that actually occupies the window; with pi-compact-plus eliding old tool results it is
+	// well below pi's raw-transcript estimate below, and it is the number the window limit applies to.
+	try {
+		const branch: any[] = ctx.sessionManager?.getBranch?.() ?? [];
+		let latestCompaction = -1;
+		for (let i = 0; i < branch.length; i++) if (branch[i]?.type === "compaction") latestCompaction = i;
+		for (let i = branch.length - 1; i > latestCompaction; i--) {
+			const m: any = branch[i]?.role === undefined ? branch[i]?.message : branch[i];
+			const u: any = m?.usage;
+			if (!u) continue;
+			const total = Number(u.totalTokens) > 0 ? Number(u.totalTokens) : [u.input, u.output, u.cacheRead, u.cacheWrite].reduce((acc: number, v: any) => acc + (Number(v) || 0), 0);
+			if (total > 0) { stats.realContextTokens = total; break; }
+		}
+	} catch {
+		/* no usage yet - the estimate below stands in */
+	}
 	// Pi's own context estimate (handles compaction + trailing messages).
 	const used = ctx.getContextUsage?.();
 	stats.contextTokens = used?.tokens ?? null;
@@ -158,7 +178,10 @@ function computeStats(ctx: ExtensionContext): UsageStats {
 		const projection = ctx.sessionManager?.buildSessionProjection?.();
 		for (const entry of projection?.entries ?? []) {
 			for (const message of entry.messages ?? []) {
-				const content = message.content;
+				// Not every agent message carries text the same way (a bash execution
+				// message has no plain content), so read it defensively: this is only a
+				// character count feeding a token estimate.
+				const content = (message as { content?: unknown }).content;
 				const chars = typeof content === "string"
 					? content.length
 					: Array.isArray(content)
@@ -179,7 +202,7 @@ function computeStats(ctx: ExtensionContext): UsageStats {
 // Speed snapshot for the renderer
 // ---------------------------------------------------------------------------
 
-function engineSnapshot(): SpeedSnapshot {
+function measuredSnapshot(): SpeedSnapshot {
 	// After the stream ends the engine's values are stable and authoritative
 	// (usage reconciled, end time fixed), so always recompute — never reuse a
 	// stale mid-stream snapshot. Only the pure window TG (tgMode "window" with
@@ -194,6 +217,8 @@ function engineSnapshot(): SpeedSnapshot {
 		statsTokens: pair.tokens,
 		statsSeconds: pair.seconds,
 		streaming: engine.isStreaming,
+		source: "measured",
+		engineName: "",
 	};
 	if (!snap.streaming && tg <= 0 && lastSpeeds.tg > 0 && settings.tgMode === "window" && settings.alignModes === "off") {
 		snap.tg = lastSpeeds.tg;
@@ -201,6 +226,75 @@ function engineSnapshot(): SpeedSnapshot {
 		lastSpeeds.tg = tg;
 	}
 	return snap;
+}
+
+/**
+ * The numbers for the speed segment.
+ *
+ * speedSource "engine" prefers what the engine itself measured, because that is
+ * the figure the engine's own console prints. Chunk arrival at pi's side is a
+ * lagging, batched copy of it, and with speculative decoding the engine counts
+ * accepted draft tokens that never arrive as separate chunks - which is why the
+ * old always-measured number kept disagreeing with the server.
+ *
+ * Order of preference: the finished request as the engine timed it, then the
+ * engine's live rate while it generates, then our own measurement. The bar says
+ * which one it is showing ("⚡ basalt • …" vs "⚡ measured • …").
+ */
+function engineSnapshot(): SpeedSnapshot {
+	const measured = measuredSnapshot();
+	if (settings.speedSource !== "engine" || settings.engineUrl === "") return measured;
+	const view = probe.view();
+
+	// 1. the request that just finished, in the engine's own seconds
+	const fin = view.final;
+	if (fin && fin.tg > 0 && !measured.streaming) {
+		return {
+			tg: fin.tg,
+			pp: fin.pp > 0 ? fin.pp : measured.pp,
+			ttft: fin.ttftS > 0 ? fin.ttftS : measured.ttft,
+			statsTokens: fin.out > 0 ? fin.out : measured.statsTokens,
+			statsSeconds: fin.genSeconds > 0 ? fin.genSeconds : measured.statsSeconds,
+			streaming: false,
+			source: "engine",
+			engineName: view.name,
+		};
+	}
+
+	// 2. live decode speed as the engine reports it right now
+	if (view.busy && view.liveTg > 0) {
+		return {
+			...measured,
+			tg: view.liveTg,
+			pp: view.livePp > 0 ? view.livePp : measured.pp,
+			source: "engine",
+			engineName: view.name,
+		};
+	}
+
+	// 3. nothing to read (engine down, no --metrics, wrong port): say so, do not hide it
+	return { ...measured, engineName: view.reachable ? view.name : "" };
+}
+
+/** One-line answer to "what is the engine reader seeing right now?". */
+function engineReadout(): string {
+	const v = probe.view();
+	const parts: string[] = [];
+	parts.push(`url=${v.url || "(off)"}`);
+	parts.push(v.reachable ? `engine=${v.name} [${v.kind}]` : `engine unreachable (${v.note || "no answer"})`);
+	parts.push(v.busy ? `busy: TG ${v.liveTg.toFixed(1)} PP ${v.livePp.toFixed(1)} t/s` : "idle");
+	const f = v.final;
+	if (f) {
+		parts.push(
+			`last ${f.id || "request"}: ${f.tg.toFixed(1)} t/s, ${f.out} tok in ${f.genSeconds.toFixed(1)} s` +
+				(f.pp > 0 ? `, PP ${f.pp.toFixed(1)}` : "") +
+				(f.ttftS > 0 ? `, TTFT ${f.ttftS.toFixed(2)} s` : ""),
+		);
+	} else {
+		parts.push("no finished request attributed yet");
+	}
+	parts.push(`bar shows ${settings.speedSource === "engine" ? "engine" : "measured"} speeds`);
+	return `pi-status-plus engine: ${parts.join(" | ")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -419,11 +513,16 @@ export default function (pi: ExtensionAPI): void {
 		autoCompactEnabled = readAutoCompact(ctx);
 		activeCtx = ctx;
 		footerInstalled = false;
+		// Start reading the engine's own speeds (harmless when nothing answers: the
+		// probe backs off and the bar quietly falls back to measured numbers).
+		probe.configure(settings.engineUrl, settings.enginePollMs);
+		probe.start();
 		applyLayout(ctx);
 		updateStatusLine(ctx, true);
 	});
 
 	pi.on("session_shutdown", () => {
+		probe.stop();
 		try {
 			if (footerInstalled) activeCtx?.ui.setFooter(undefined);
 			activeCtx?.ui.setStatus(STATUS_KEY, undefined);
@@ -441,7 +540,11 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("message_start", (event: MessageStartEvent) => {
 		if (event.message.role === "assistant") {
 			const ts = (event.message as { timestamp?: number }).timestamp;
-			engine.start(typeof ts === "number" && Number.isFinite(ts) ? ts : Date.now());
+			const start = typeof ts === "number" && Number.isFinite(ts) ? ts : Date.now();
+			engine.start(start);
+			// Tell the engine reader a request went out: it needs the start time (and
+			// the engine's counters at that moment) to attribute the right request.
+			probe.beginRequest(start);
 		}
 	});
 
@@ -466,6 +569,8 @@ export default function (pi: ExtensionAPI): void {
 		const usage = (event.message as { usage?: EntryUsage }).usage;
 		if (usage) engine.reconcile(usage.output ?? 0, usage.input ?? 0);
 		engine.stop(Date.now());
+		// The output count is the key the engine's request list is matched with.
+		probe.endRequest(usage?.output ?? 0);
 		// The authoritative end-of-stream values bypass the refresh throttle, so
 		// the very next footer render already shows the frozen numbers.
 		if (activeCtx) refreshDisplayCache(activeCtx);
@@ -512,6 +617,8 @@ function findField(name: string): string | undefined {
 	for (const key of ENUM_FIELDS) if (key.toLowerCase() === lower) return key;
 	if ("tgwindow" === lower) return "tgWindowMs";
 	if ("refresh" === lower) return "refreshMs";
+	if (lower === "engineurl" || lower === "engine_url") return "engineUrl";
+	if (lower === "enginepoll" || lower === "enginepollms" || lower === "poll") return "enginePollMs";
 	return undefined;
 }
 
@@ -533,6 +640,10 @@ async function handleCommand(args: string, ctx: ExtensionCommandContext): Promis
 	if (headRaw === "menu") {
 		if (ctx.mode === "tui") await runMenu(ctx);
 		else ctx.ui.notify("the settings menu needs the interactive terminal (pi in TUI mode)", "info");
+		return;
+	}
+	if (headRaw === "engine") {
+		ctx.ui.notify(engineReadout(), "info");
 		return;
 	}
 
@@ -593,6 +704,30 @@ async function handleCommand(args: string, ctx: ExtensionCommandContext): Promis
 		return;
 	}
 
+	// engineUrl: where to read the engine's own speeds from ("off" stops reading one).
+	if (head === "engineUrl") {
+		const wanted = (words[1] ?? "").trim();
+		if (wanted === "") {
+			ctx.ui.notify(`engineUrl = ${settings.engineUrl || "(off)"} — e.g. /status-plus engineUrl http://127.0.0.1:9931 (or "off")`, "info");
+			return;
+		}
+		settings.engineUrl = wanted === "off" ? "" : wanted.replace(/\/+$/, "");
+		commit(ctx, `engineUrl → ${settings.engineUrl || "off"}`);
+		return;
+	}
+
+	// enginePollMs.
+	if (head === "enginePollMs") {
+		const value = Number(words[1]);
+		if (words[1] === undefined || !Number.isFinite(value) || value < 100 || value > 5000) {
+			ctx.ui.notify(`enginepoll needs a number from 100 to 5000 ms (now ${settings.enginePollMs})`, "warning");
+			return;
+		}
+		settings.enginePollMs = Math.round(value);
+		commit(ctx, `enginePollMs → ${settings.enginePollMs}`);
+		return;
+	}
+
 	ctx.ui.notify(`unknown field "${words[0]}" — try /status-plus (menu) or /status-plus status`, "warning");
 }
 
@@ -608,6 +743,7 @@ const BOOL_KEYS_LIST: readonly BoolKey[] = [
 	"hideStatusLine",
 	"countToolCalls",
 	"pauseDuringTools",
+	"showSpeedSource",
 ];
 
 function setEnum(key: EnumField, value: string): void {
@@ -615,6 +751,8 @@ function setEnum(key: EnumField, value: string): void {
 }
 
 function commit(ctx: ExtensionCommandContext, message: string): void {
+	// Settings may have moved the engine endpoint: re-point the reader at once.
+	probe.configure(settings.engineUrl, settings.enginePollMs);
 	try {
 		saveSettings(getAgentDir(), settings);
 		ctx.ui.notify(`${message} · saved`, "info");
@@ -630,6 +768,8 @@ function settingsSummary(): string {
 	for (const key of BOOL_KEYS_LIST) parts.push(`${key}=${s[key] ? "on" : "off"}`);
 	parts.push(`tgWindowMs=${s.tgWindowMs}`);
 	parts.push(`refreshMs=${s.refreshMs}`);
+	parts.push(`engineUrl=${s.engineUrl || "(off)"}`);
+	parts.push(`enginePollMs=${s.enginePollMs}`);
 	return `pi-status-plus: ${parts.join(", ")}`;
 }
 
@@ -639,6 +779,8 @@ async function runMenu(ctx: ExtensionCommandContext): Promise<void> {
 		...ENUM_FIELDS.map((key: EnumField) => ({ key, label: key })),
 		{ key: "tgWindowMs", label: "tgWindowMs" },
 		{ key: "refreshMs", label: "refreshMs" },
+		{ key: "engineUrl", label: "engineUrl" },
+		{ key: "enginePollMs", label: "enginePollMs" },
 		...BOOL_KEYS_LIST.map((key: BoolKey) => ({ key, label: key })),
 	];
 
@@ -683,6 +825,30 @@ async function runMenu(ctx: ExtensionCommandContext): Promise<void> {
 			}
 			settings.refreshMs = Math.round(value);
 			commit(ctx, `refreshMs → ${settings.refreshMs}`);
+			continue;
+		}
+		if (key === "engineUrl") {
+			const text = await ctx.ui.input("engineUrl to read engine speeds from (http://127.0.0.1:9931, or empty for none)", settings.engineUrl);
+			if (text === undefined) continue;
+			const wanted = text.trim();
+			if (wanted !== "" && !/^https?:\/\//i.test(wanted)) {
+				ctx.ui.notify("engineUrl must start with http:// or https:// (empty turns it off)", "warning");
+				continue;
+			}
+			settings.engineUrl = wanted.replace(/\/+$/, "");
+			commit(ctx, `engineUrl → ${settings.engineUrl || "off"}`);
+			continue;
+		}
+		if (key === "enginePollMs") {
+			const text = await ctx.ui.input("enginePollMs (100-5000 ms)", String(settings.enginePollMs));
+			if (text === undefined) continue;
+			const value = Number(text.trim());
+			if (!Number.isFinite(value) || value < 100 || value > 5000) {
+				ctx.ui.notify("needs a number from 100 to 5000", "warning");
+				continue;
+			}
+			settings.enginePollMs = Math.round(value);
+			commit(ctx, `enginePollMs → ${settings.enginePollMs}`);
 			continue;
 		}
 		if ((ENUM_FIELDS as readonly string[]).includes(key)) {

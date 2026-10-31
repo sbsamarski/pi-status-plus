@@ -8,7 +8,10 @@ This extension replaces the whole bar with something you control:
 
 - **Five layouts** — from a single minimal line to two information-dense rows
 - **Generation (TG) and prefill (PP) speeds**, plus **time to first token (TTFT)**
-- **Real token counts** — the context line reads `213.0k/1.0M (20.3%)`, not just a percentage
+- **Real token counts** — the context line reads `213.0k/1.0M, 20.3%`, not just a percentage
+- **Speeds read from the engine itself** — basalt, strata, llama.cpp and ik_llama.cpp are asked for
+  their own decode/prefill rate over the request they just served, so the bar agrees with the engine
+  console instead of re-timing the stream
 - **A working folder you can hide** (or tuck into the corner instead of its own full-width line)
 - **A one-command switch back to the stock bar** — and back again, live, no reload
 
@@ -35,7 +38,7 @@ One command drives everything: `/status-plus`. Every choice is saved and remembe
 The default layout, **two-line-a**:
 
 ```
-↑1.2M, ↓192k, R43.0M, CH98.5%, 213.0k/1.0M (20.3%), auto • ⚡ TG 32.4 t/s • PP 85.7 t/s • 120 tok in 4 s • TTFT 3.50 s • Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf • xhigh
+↑1.2M, ↓192k, R43.0M, CH98.5%, 213.0k/1.0M, 20.3%, auto • ⚡ basalt • TG 32.4 t/s • PP 85.7 t/s • 120 tok in 4 s • TTFT 3.50 s • Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf • xhigh
 D:\Projects\demo-agent • 🔌 MCP: 4 servers enabled (5 disabled)
 ```
 
@@ -47,7 +50,7 @@ Line by line, here is what you are looking at.
 - `↓192k` — tokens received back
 - `R43.0M` — prompt tokens served from the provider's prompt cache instead of re-processed (with a warm llama.cpp KV-cache this is huge — by design)
 - `CH98.5%` — cache hit rate of the most recent call
-- `213.0k/1.0M (20.3%)` — the conversation's current footprint: actual tokens, context window, percentage
+- `213.0k/1.0M, 20.3%` — the conversation's current footprint: tokens the server holds, context window, percentage
 - `auto` — pi's own indicator that automatic context compaction is on (hideable)
 
 **Line 1 — the speed segment** (marked by a lightning bolt so your eye finds it instantly):
@@ -110,7 +113,13 @@ request sent (t0) ──► first token ──► end
 
 The wait before the first token (network, queue, and the prefill — the server reading your prompt) is **TTFT**. The speed of reading the prompt is **PP**. The speed of writing the response is **TG**.
 
-- **TG** — two styles, your choice with `tgMode`:
+- **Where each number comes from** — with `speedSource engine` (the default) TG, PP, TTFT and the pair
+  are taken from the engine's own report of the request it just served, and the segment starts with the
+  engine's name (`⚡ basalt • …`). When no engine can be read — wrong port, llama-server started without
+  `--metrics`, offline provider — the same slots are filled from pi's own timing and the segment says
+  `⚡ measured • …`. The label is never wrong about which of the two you are looking at.
+- **TG** — two styles, your choice with `tgMode` (they matter when the number is `measured`; with engine
+  numbers the engine decides):
   - `window` — "how fast right now": tokens from the last little while (1 s default, tunable 100 ms–60 s) over the time they actually took. Behaves like llama.cpp's live console rate.
   - `final` — "how fast overall": the finished response's output tokens over generation time. The honest average.
 - **PP** — measured once per response: *new* (non-cached) prompt tokens over the prefill wait. With a warm cache it can look absurdly high — correctly so, because those tokens were never re-read.
@@ -134,6 +143,9 @@ One command, one settings file. Type `/status-plus` for an interactive menu of e
 /status-plus showTtft off             hide the time-to-first-token
 /status-plus tgwindow 5000            set the live TG window to 5 seconds
 /status-plus statsMode gen            choose the pair's time base
+/status-plus engine                   what the engine reader sees right now
+/status-plus engineUrl http://127.0.0.1:8080   read a different server ("off" for none)
+/status-plus speedSource measured     stop reading the engine
 /status-plus status                   print every current setting
 ```
 
@@ -144,6 +156,10 @@ Settings persist in `~/.pi/agent/pi-status-plus.json`; a documented example ship
 | `layout` | `two-line-a`, `one-line`, `two-line-b`, `status-line`, `stock` | The overall shape of the bar |
 | `modelDisplay` | `filename`, `full` | Local models by file name only, or full provider-and-path identifier |
 | `tokenSource` | `provider`, `estimate` | Token counts from the provider's usage report (exact) or the extension's own counting |
+| `speedSource` | `engine`, `measured` | Read speeds from the inference engine, or time pi's stream here |
+| `engineUrl` | `http://127.0.0.1:9931` | Where to read engine speeds from (`off` stops trying) |
+| `enginePollMs` | `250` (100–5000) | How often to poll the engine while it is busy |
+| `showSpeedSource` | `on` / `off` | Show the engine name / `measured` at the start of the speed segment |
 | `tgMode` | `window`, `final` | Live TG formula (only matters when `alignModes` is `off`) |
 | `statsMode` | `gen`, `wall` | The "N tok in S s" time base |
 | `alignModes` | `match`, `off` | Force the displayed TG to agree with the displayed pair |
@@ -168,9 +184,28 @@ Three design choices, explained:
 
 ## Where the numbers come from
 
-Everything is derived from events pi itself sees: request start, each arriving piece of text, and the response end with the provider's official usage report.
+Two sources, and the bar always tells you which one it used.
 
-- Pi never receives llama.cpp's internal timing blocks — no extension can quote the server's exact internal counters. Instead, the same moments are measured you would time with a stopwatch, and the running tally is reconciled against the provider's token report at every response end.
+**The engine (default).** A local server knows exactly how long its own decode loop ran, and that is the
+number its console prints. pi only sees the finished stream, so an extension that times chunk arrivals is
+measuring something else: chunks arrive in batches, pi's own work sits between them, and an engine with
+speculative decoding counts accepted draft tokens that never cross the socket one by one. So the bar
+asks the server, at `engineUrl`:
+
+| Engine | What is read |
+| --- | --- |
+| **basalt**, **strata** | `GET /metrics` (JSON): `live.tok_s` and `live.prefill_tok_s_mean` while it works, then the finished entry in `requests[]` — `decode_tok_s`, `ttft_s`, `prompt_ms`, `prompt_tokens`, `reused`, `output_tokens`, `duration_s`. `GET /health` gives the name (`"service": "basalt"`). |
+| **llama.cpp**, **ik_llama.cpp** | `GET /metrics` (Prometheus, needs the server started with `--metrics`). The counters are cumulative, so a request's speed is the delta of the two samples taken at its start and end: `tokens_predicted_total ÷ tokens_predicted_seconds_total`, prefill the same way. That is the engine's own eval rate, not a stopwatch. |
+| **anything else** | Name is probed from `/health` and `/props`. If no speed can be read, the bar falls back and says `measured`. |
+
+The finished request is matched to pi's message by start time **and** by the output-token count pi was
+reported — the engine and pi agree on that number, since pi's usage comes from the same response. That
+matters because pi's own session-title and compaction calls are extra entries in the same list.
+
+**pi's own timing (fallback, and what `speedSource measured` forces).** Derived from events pi itself
+sees: request start, each arriving piece of text, and the response end with the provider's usage report.
+
+- The same moments are measured as you would with a stopwatch, and the running tally is reconciled against the provider's token report at every response end.
 - **The frozen numbers after a response are exact by construction.** The live numbers are estimates that converge, as described above.
 - For llama.cpp / ik_llama.cpp users: the frozen TG matches the server's eval rate (with `statsMode gen`), and PP reflects genuinely *new* prompt tokens — which is why it can legitimately exceed the server's cold-prefill numbers once your context warms up.
 
@@ -202,6 +237,13 @@ Until then the type check reports the pi imports as unresolved — expected, and
 - **The speed segment is empty — is it broken?**
   No. Nothing has been measured yet. TG appears the moment text starts flowing; PP and the pair appear when the response completes. Afterwards the last values stay on the bar permanently.
 
+- **My TG never matched the engine console. Fixed?**
+  Yes, that is what `speedSource engine` is for. Run `/status-plus engine` and it answers three things:
+  which URL it reads, whether the engine answered and what it calls itself, and the engine's own numbers
+  for the last request it served. If the bar starts with `measured` instead of your engine's name, that
+  command tells you why — usually the port (`/status-plus engineUrl http://127.0.0.1:8080`) or a
+  llama-server started without `--metrics`, which has no counters to read.
+
 - **Why is my live TG different from the frozen TG of the same response?**
   Live = a moving average of recent events (an estimate). Frozen = the provider's exact usage report. With `alignModes match` + `statsMode gen` the frozen TG equals the frozen pair's implied speed to the digit, and matches the server console's eval rate.
 
@@ -225,6 +267,7 @@ A handful of small files, one job each:
 
 - `index.ts` — wires pi's events and commands to everything else
 - `engine.ts` — measures and computes all speeds from those events
+- `engines.ts` — reads the speeds the inference engine itself measured (basalt, strata, llama.cpp)
 - `footer.ts` — turns numbers into the lines you see
 - `settings.ts` — owns the configuration file
 - `types.ts` — shared shapes

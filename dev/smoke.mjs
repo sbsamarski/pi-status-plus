@@ -49,9 +49,9 @@ const fakePi = {
 // './x.ts' only within the same folder layout as the sources).
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
-for (const f of ["engine.ts", "footer.ts", "index.ts", "settings.ts", "types.ts"]) {
+for (const f of ["engine.ts", "engines.ts", "footer.ts", "index.ts", "settings.ts", "types.ts"]) {
 	let src = readFileSync(join(root, f), "utf8");
-	for (const m of ["engine", "footer", "settings", "types"]) {
+	for (const m of ["engine", "engines", "footer", "settings", "types"]) {
 		src = src.replaceAll(`from "./${m}.js"`, `from "./${m}.ts"`);
 	}
 
@@ -211,7 +211,7 @@ console.log("\n=== session_shutdown cleanup ===");
 await fire("session_shutdown", {}, ctx);
 
 rmSync(agentDir, { recursive: true, force: true });
-for (const f of ["engine.ts", "footer.ts", "index.ts", "settings.ts", "types.ts"]) {
+for (const f of ["engine.ts", "engines.ts", "footer.ts", "index.ts", "settings.ts", "types.ts"]) {
 	rmSync(join(here, f), { force: true });
 }
 console.log("\nsmoke OK");

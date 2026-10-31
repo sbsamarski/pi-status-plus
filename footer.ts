@@ -2,8 +2,8 @@
  * pi-status-plus — footer renderer.
  *
  * Pure functions that build the status-bar lines from live data:
- *   - stats segment: usage totals + context "used/total (pct%), auto"
- *   - speed segment: "⚡ TG xx t/s • PP yy t/s • TTFT zz s • N tok in S s"
+ *   - stats segment: usage totals + context "used/total, pct%, auto"
+ *   - speed segment: "⚡ <engine|measured> • TG xx t/s • PP yy t/s • N tok in S s • TTFT zz s"
  *   - right side: model • thinking level • working folder
  *   - stock line-1 approximation for the "keep-line-1" layout
  */
@@ -60,7 +60,7 @@ function contextPercentColored(theme: FooterFrameData["theme"], percent: number)
 
 /**
  * Build the stats segment pieces in the user's requested format:
- *   "↑395k, ↓115k, R9.8M, CH99.9%, 70.3k/90k (78.1%), auto"
+ *   "↑395k, ↓115k, R9.8M, CH99.9%, 106.4k/260.0k, 40.9%, auto"
  * Returned split into plain/colored pieces for exact dim+color composing.
  */
 export function buildStatsParts(data: FooterFrameData): StatsParts {
@@ -76,18 +76,21 @@ export function buildStatsParts(data: FooterFrameData): StatsParts {
 		beforeParts.push(`CH${stats.cacheHitRate.toFixed(1)}%`);
 	}
 
-	// Context piece: "used/total (pct%)". The auto indicator becomes its own
-	// ", auto" item AFTER the parentheses (per the user's example).
+	// Context piece: "used/total, pct%". The auto indicator stays its own
+	// ", auto" item after the percentage.
 	let context = "";
 	let contextColored = "";
 	let autoItem: string | undefined;
-	if (stats.contextTokens !== null) {
-		const used = stats.contextTokens;
-		const pct = stats.contextWindow > 0 ? (used / stats.contextWindow) * 100 : 0;
-		context = `${formatTokensCtx(used)}/${formatTokensCtx(stats.contextWindow)} (${contextPercentColored(data.theme, pct)})`;
+	// The number shown is the one the SERVER holds (elided transcript), not pi's
+	// raw-transcript estimate - with elision the two differ by 100k tokens and
+	// more, and the window limit applies to the server's figure.
+	if (stats.contextTokens !== null || (stats.realContextTokens ?? 0) > 0) {
+		const real = (stats.realContextTokens ?? 0) > 0 ? stats.realContextTokens! : stats.contextTokens!;
+		const pct = stats.contextWindow > 0 ? (real / stats.contextWindow) * 100 : 0;
+		context = `${formatTokensCtx(real)}/${formatTokensCtx(stats.contextWindow)}, ${contextPercentColored(data.theme, pct)}`;
 		contextColored = context;
 	} else {
-		context = `?/${formatTokensCtx(stats.contextWindow)} (?%)`;
+		context = `?/${formatTokensCtx(stats.contextWindow)}, ?%`;
 		contextColored = context;
 	}
 	if (s.showAuto && stats.autoCompact) autoItem = "auto";
@@ -108,12 +111,20 @@ export function statsPartsPlain(parts: StatsParts): string {
 	return items.join(", ");
 }
 
-/** Build the speed segment: "⚡ TG xx t/s • PP yy t/s • N tok in S s • TTFT zz s". */
+/**
+ * Build the speed segment: "⚡ basalt • TG xx t/s • PP yy t/s • N tok in S s • TTFT zz s".
+ * The first item names where the speeds came from - the engine that produced
+ * them, or "measured" when the extension timed pi's stream itself - so a number
+ * that disagrees with the engine console is never silently a different measure.
+ */
 export function buildSpeedSegment(data: FooterFrameData): string {
 	const speed = data.speed;
 	const s = data.settings;
 	const parts: string[] = [];
 
+	if (s.showSpeedSource && (speed.tg > 0 || speed.streaming)) {
+		parts.push(speed.source === "engine" ? speed.engineName || "engine" : "measured");
+	}
 	if (speed.tg > 0 || (speed.streaming && speed.statsTokens > 0)) {
 		parts.push(`${s.showSpeedLabels ? "TG " : ""}${speedText(speed.tg)} t/s`);
 	}

@@ -12,8 +12,14 @@ export interface UsageStats {
 	cacheWrite: number;
 	cost: number;
 	cacheHitRate: number | undefined;
-	/** Estimated current context tokens, null when unknown (e.g. right after compaction). */
+	/** Estimated current context tokens, null when unknown (e.g. right after compaction). This is
+	 *  pi's estimate over the RAW transcript: with pi-compact-plus eliding old tool results it is the
+	 *  size of the transcript on disk, NOT the size of the request that goes to the server. */
 	contextTokens: number | null;
+	/** What the server actually holds: the last real usage report of the current branch (prompt
+	 *  tokens including the cached prefix, plus what the model generated). With elision this is far
+	 *  below contextTokens; null when no usable usage report exists yet. */
+	realContextTokens?: number | null;
 	/** Context window of the active model. */
 	contextWindow: number;
 	/** Auto-compact currently enabled for the session. */
@@ -34,13 +40,17 @@ export interface SpeedSnapshot {
 	statsSeconds: number;
 	/** True while a stream is active. */
 	streaming: boolean;
+	/** Where tg/pp/ttft came from: the engine itself, or our own measurement. */
+	source: "engine" | "measured";
+	/** Engine the numbers came from ("" when unknown or measured). */
+	engineName: string;
 }
 
 /** Stats segment split into plain/colored pieces for exact dim+color composing. */
 export interface StatsParts {
 	/** Plain text before the context piece ("" when none). */
 	before: string;
-	/** Plain context piece, e.g. "70.3k/90k (78.1%)" ("" when no data). */
+	/** Plain context piece, e.g. "70.3k/90k, 78.1%" ("" when no data). */
 	context: string;
 	/** ANSI-colored context piece ("" when no data). */
 	contextColored: string;
@@ -79,4 +89,6 @@ export interface StatusPlusSettingsView {
 	statsMode: "wall" | "gen";
 	alignModes: "off" | "match";
 	tokenSource: "provider" | "estimate";
+	/** Name the speed source (engine name, or "measured") in the speed segment. */
+	showSpeedSource: boolean;
 }

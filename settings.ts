@@ -32,6 +32,8 @@ export type AlignMode = "off" | "match";
 export type ModelDisplay = "filename" | "full";
 /** Source of the per-call token counts. */
 export type TokenSource = "provider" | "estimate";
+/** Where the speeds come from: the engine's own numbers, or our own timing. */
+export type SpeedSource = "engine" | "measured";
 
 export interface StatusPlusSettings {
 	layout: LayoutMode;
@@ -71,6 +73,14 @@ export interface StatusPlusSettings {
 	tgWindowMs: number;
 	/** How often the bar's numbers may refresh, in ms. */
 	refreshMs: number;
+	/** "engine" reads TG/PP/TTFT from the local engine itself; "measured" times pi's stream. */
+	speedSource: SpeedSource;
+	/** Base URL of the engine to read speeds from ("" = never read one). */
+	engineUrl: string;
+	/** How often to poll the engine while it is busy, in ms. */
+	enginePollMs: number;
+	/** Show which source the speeds came from (engine name, or "measured"). */
+	showSpeedSource: boolean;
 }
 
 export const DEFAULTS: StatusPlusSettings = {
@@ -93,6 +103,10 @@ export const DEFAULTS: StatusPlusSettings = {
 	pauseDuringTools: true,
 	tgWindowMs: 1000,
 	refreshMs: 500,
+	speedSource: "engine",
+	engineUrl: "http://127.0.0.1:9931",
+	enginePollMs: 250,
+	showSpeedSource: true,
 };
 
 const LAYOUTS = ["one-line", "two-line-a", "two-line-b", "status-line", "stock"] as const;
@@ -101,6 +115,7 @@ const TOKEN_SOURCES = ["provider", "estimate"] as const;
 const TG_MODES = ["window", "final"] as const;
 const STATS_MODES = ["wall", "gen"] as const;
 const ALIGN_MODES = ["off", "match"] as const;
+const SPEED_SOURCES = ["engine", "measured"] as const;
 const BOOL_KEYS = [
 	"showStats",
 	"showTtft",
@@ -113,6 +128,7 @@ const BOOL_KEYS = [
 	"hideStatusLine",
 	"countToolCalls",
 	"pauseDuringTools",
+	"showSpeedSource",
 ] as const;
 
 export type BoolKey = (typeof BOOL_KEYS)[number];
@@ -124,9 +140,10 @@ export const ENUM_CHOICES: Record<string, readonly string[]> = {
 	tgMode: TG_MODES,
 	statsMode: STATS_MODES,
 	alignModes: ALIGN_MODES,
+	speedSource: SPEED_SOURCES,
 };
 
-export const ENUM_FIELDS = ["layout", "modelDisplay", "tokenSource", "tgMode", "statsMode", "alignModes"] as const;
+export const ENUM_FIELDS = ["layout", "modelDisplay", "tokenSource", "tgMode", "statsMode", "alignModes", "speedSource"] as const;
 
 export type EnumField = (typeof ENUM_FIELDS)[number];
 
@@ -146,6 +163,21 @@ function clampRefresh(value: unknown): number {
 	return Math.min(10000, Math.max(100, Math.round(num)));
 }
 
+/** Validate enginePollMs into a sane range. */
+function clampEnginePoll(value: unknown): number {
+	const num = typeof value === "number" && Number.isFinite(value) ? value : DEFAULTS.enginePollMs;
+	return Math.min(5000, Math.max(100, Math.round(num)));
+}
+
+/** A URL to poll: keep it absolute and drop a trailing slash. */
+function cleanUrl(value: unknown): string {
+	if (typeof value !== "string") return DEFAULTS.engineUrl;
+	const trimmed = value.trim();
+	if (trimmed === "") return ""; // explicitly off
+	if (!/^https?:\/\//i.test(trimmed)) return DEFAULTS.engineUrl;
+	return trimmed.replace(/\/+$/, "");
+}
+
 export function loadSettings(agentDir: string): StatusPlusSettings {
 	const settings: StatusPlusSettings = { ...DEFAULTS };
 	try {
@@ -156,6 +188,9 @@ export function loadSettings(agentDir: string): StatusPlusSettings {
 		if (isString(raw.tgMode, TG_MODES)) settings.tgMode = raw.tgMode;
 		if (isString(raw.statsMode, STATS_MODES)) settings.statsMode = raw.statsMode;
 		if (isString(raw.alignModes, ALIGN_MODES)) settings.alignModes = raw.alignModes;
+		if (isString(raw.speedSource, SPEED_SOURCES)) settings.speedSource = raw.speedSource;
+		if (raw.engineUrl !== undefined) settings.engineUrl = cleanUrl(raw.engineUrl);
+		if (raw.enginePollMs !== undefined) settings.enginePollMs = clampEnginePoll(raw.enginePollMs);
 		for (const key of BOOL_KEYS) {
 			const value = raw[key];
 			if (typeof value === "boolean") settings[key] = value;

@@ -43,5 +43,5 @@
     //   ]
     // }
   },
-  "include": ["index.ts", "engine.ts", "footer.ts", "settings.ts", "types.ts"]
+  "include": ["index.ts", "engine.ts", "engines.ts", "footer.ts", "settings.ts", "types.ts"]
 }

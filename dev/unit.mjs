@@ -73,6 +73,38 @@ for (let i = 0; i < 10; i++) {
 }
 console.log('weighted counted after 10 chunks:', Math.round(e2.counted), '(expect ~20)');
 console.log('ratio test OK:', Math.abs(e2.learnedTokensPerEvent - 2) < 0.01 && Math.abs(e2.counted - 20) < 1);
+// --- the context piece and the speed source marker (visible format) ----------
+const settingsMod = await import('./settings.ts');
+const theme = { fg: (_c, t) => t };
+const view = (over) => ({ ...settingsMod.DEFAULTS, ...over });
+
+// Context: "used/total, pct%" - no parentheses, no "raw" figure. realContextTokens
+// is what the server holds; contextTokens (pi's raw-transcript estimate) is larger
+// here on purpose, the case that used to print ", raw 250.0k" inside the brackets.
+const parts = mod.buildStatsParts({
+  stats: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0, cacheHitRate: undefined,
+           contextTokens: 250000, realContextTokens: 106400, contextWindow: 260000, autoCompact: true },
+  settings: view({ showAuto: true }),
+  theme,
+});
+console.log('context piece:', JSON.stringify(parts.context));
+console.log('context format OK:', parts.context === '106.4k/260.0k, 40.9%'
+  && !parts.context.includes('(') && !parts.context.toLowerCase().includes('raw'));
+console.log('stats line:', mod.statsPartsPlain(parts));
+console.log('auto kept as its own item:', mod.statsPartsPlain(parts).endsWith(', auto'));
+
+const speedData = (source, engineName) => ({
+  speed: { tg: 51.3, pp: 103.4, ttft: 0.91, statsTokens: 112, statsSeconds: 2.09, streaming: false, source, engineName },
+  settings: view({}),
+});
+const fromEngine = mod.buildSpeedSegment(speedData('engine', 'basalt'));
+const fromPi = mod.buildSpeedSegment(speedData('measured', ''));
+console.log('speed (engine):', JSON.stringify(fromEngine));
+console.log('speed (measured):', JSON.stringify(fromPi));
+console.log('speed source marker OK:',
+  fromEngine === '\u26a1 basalt \u2022 TG 51.3 t/s \u2022 PP 103.4 t/s \u2022 112 tok in 2 s \u2022 TTFT 0.91 s'
+  && fromPi.includes('measured \u2022 TG'));
+
 for (const f of ["engine.ts", "footer.ts", "settings.ts", "types.ts"]) {
 	rmSync(join(here, f), { force: true });
 }
