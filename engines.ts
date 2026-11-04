@@ -82,6 +82,10 @@ export interface EngineView {
 	/** When that activity began in wall-clock ms (0 = idle). Lets the caller tell
 	 *  "the engine is busy with something new" from "still finishing what we timed". */
 	busySince: number;
+	/** The activity right now is reading a prompt (so PP is the live rate and TG
+	 *  is not). Engines keep reporting their prefill mean during decode, so the
+	 *  caller cannot tell this from the numbers alone. */
+	prefilling: boolean;
 	/** Live decode speed, averaged over the window passed to view() (0 = none). */
 	liveTg: number;
 	/** Live prefill speed, averaged over the window passed to view(). */
@@ -129,6 +133,7 @@ export class EngineProbe {
 	private liveTg = 0; // raw, as the engine said it this instant
 	private livePp = 0;
 	private liveState = "";
+	private prefillingNow = false;
 	private lastFinal: EngineRequestNumbers | null = null;
 	private samples: LiveSample[] = [];
 	private lastTokens: number | null = null;
@@ -226,6 +231,7 @@ export class EngineProbe {
 			reachable: this.reachable,
 			busy: this.busyMs > 0,
 			busySince: this.busyMs,
+			prefilling: this.prefillingNow,
 			liveTg: smooth ? this.smooth("tg", windowMs) : this.liveTg,
 			livePp: smooth ? this.smooth("pp", windowMs) : this.livePp,
 			liveTgRaw: this.liveTg,
@@ -462,6 +468,7 @@ export class EngineProbe {
 		// Reading a prompt: there is no decode rate yet, and the engine says so by
 		// leaving tok_s empty. Do not carry the previous request's rate into that.
 		const prefilling = /read|prefill|prompt|queue|load/.test(state);
+		this.prefillingNow = prefilling && busy;
 		this.liveTg = prefilling ? 0 : (num(live.tok_s) ?? this.slotLiveTg(data) ?? (busy ? this.liveTg : 0));
 		// The engine's prefill mean outlives the prefill itself (it describes the
 		// prompt that was just read), so PP stays on the bar during decode too.
@@ -576,13 +583,16 @@ export class EngineProbe {
 			// Only report a live rate while tokens are actually moving.
 			if (dPred > 0 && dPredSec > 0.05) {
 				this.liveTg = dPred / dPredSec;
+				this.prefillingNow = false;
 				this.busyMs = this.busyMs || Date.now();
 			} else if (dPrompt > 0 && dPromptSec > 0.05) {
 				this.livePp = dPrompt / dPromptSec;
+				this.prefillingNow = true; // prompt counters moved, decode did not
 				this.busyMs = this.busyMs || Date.now();
 			} else if (this.busyMs > 0 && Date.now() - this.busyMs > 1500) {
 				this.busyMs = 0;
 				this.liveTg = 0;
+				this.prefillingNow = false;
 			}
 		}
 		this.prevCounters = counters;

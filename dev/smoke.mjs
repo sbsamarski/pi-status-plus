@@ -202,8 +202,14 @@ const r3 = footerActive(120).join("|");
 console.log("render changed after 600ms:", r3 !== r1 ? "PASS" : "FAIL");
 await fire("message_end", { message: { role: "assistant", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0 }, totalTokens: 5 } } }, ctx);
 await fire("turn_end", {}, ctx);
-const r4 = footerActive(120).join("|");
+// 200 columns: TG and PP both stay on the bar now, and this fake's very long
+// model filename would otherwise truncate the line before the token pair.
+const r4 = footerActive(200).join("|");
 console.log("frozen values right after end:", clean(r4).includes("5 tok in") ? "PASS" : `FAIL: ${clean(r4)}`);
+console.log(
+	"kept averages stay on the bar, dim:",
+	/\u0001dim:TG/.test(r4) && /\u0001dim:PP/.test(r4) ? "PASS" : `FAIL: ${r4}`,
+);
 
 // ---------------------------------------------------------------------------
 // The engine is working while pi is idle: compaction, session summary, another
@@ -245,19 +251,22 @@ commands.get("status-plus").handler(`engineUrl http://127.0.0.1:${fakeEngine.add
 commands.get("status-plus").handler("enginePollMs 100", ctx);
 commands.get("status-plus").handler("showPp on", ctx);
 await new Promise((resolve) => setTimeout(resolve, 1200));
-const duringDecode = clean(footerActive(160).join(" | "));
-console.log("  decoding, pi idle:", duringDecode);
-console.log("  TG shown with no pi request:", /TG \d/.test(duringDecode) ? "PASS" : "FAIL");
+const decodeRaw = footerActive(160).join(" | ");
+console.log("  decoding, pi idle:", clean(decodeRaw));
+console.log("  TG shown with no pi request:", /TG \d/.test(decodeRaw) ? "PASS" : "FAIL");
+console.log("  live TG is white:", /\u0001dim:TG/.test(decodeRaw) ? "FAIL" : "PASS");
 
 engineState.state = "reading"; // prompt being read: a PP exists, a TG does not yet
 engineState.tok_s = null;
 engineState.prefill = 412;
 await new Promise((resolve) => setTimeout(resolve, 900));
-const duringPrefill = clean(footerActive(160).join(" | "));
-console.log("  prefilling, pi idle:", duringPrefill);
+const prefillRaw = footerActive(160).join(" | ");
+console.log("  prefilling, pi idle:", clean(prefillRaw));
 console.log(
-	"  PP shown, stale TG dropped:",
-	/PP \d/.test(duringPrefill) && !/TG \d/.test(duringPrefill) ? "PASS" : "FAIL",
+	"  live PP white, last TG kept but dim:",
+	/PP \d/.test(prefillRaw) && !/\u0001dim:PP/.test(prefillRaw) && /\u0001dim:TG/.test(prefillRaw)
+		? "PASS"
+		: "FAIL",
 );
 
 fakeEngine.close();

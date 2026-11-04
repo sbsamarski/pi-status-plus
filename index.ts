@@ -89,7 +89,7 @@ let activeCtx: ExtensionContext | undefined;
 let footerInstalled = false;
 let autoCompactEnabled = true;
 ;/** Last non-zero window TG, kept only for the tgMode "window" decay case. */
-let lastSpeeds = { tg: 0 };
+let lastSpeeds = { tg: 0, pp: 0 };
 
 // ---------------------------------------------------------------------------
 // Usage stats (recomputed per render, mirrors the stock footer's math)
@@ -217,6 +217,10 @@ function measuredSnapshot(): SpeedSnapshot {
 		statsTokens: pair.tokens,
 		statsSeconds: pair.seconds,
 		streaming: engine.isStreaming,
+		// White while the decode loop is running here; before the first token there
+		// is no decode and the engine is reading the prompt, so PP is the live one.
+		tgLive: engine.isStreaming,
+		ppLive: engine.isStreaming && engine.ttftMs() === 0,
 		source: "measured",
 		engineName: "",
 	};
@@ -226,6 +230,22 @@ function measuredSnapshot(): SpeedSnapshot {
 		lastSpeeds.tg = tg;
 	}
 	return snap;
+}
+
+/**
+ * Keep both rates on the bar.
+ *
+ * A rate that has stopped keeps the average it left behind, and the live flag on
+ * it tells the renderer to show it dim; a rate that is happening is shown in
+ * white. Only a rate that has never been measured at all is missing - the bar
+ * never prints a zero placeholder.
+ */
+function keepRates(s: SpeedSnapshot): SpeedSnapshot {
+	if (s.tg > 0) lastSpeeds.tg = s.tg;
+	else if (lastSpeeds.tg > 0) s.tg = lastSpeeds.tg;
+	if (s.pp > 0) lastSpeeds.pp = s.pp;
+	else if (lastSpeeds.pp > 0) s.pp = lastSpeeds.pp;
+	return s;
 }
 
 /**
@@ -247,7 +267,7 @@ function measuredSnapshot(): SpeedSnapshot {
  */
 function engineSnapshot(): SpeedSnapshot {
 	const measured = measuredSnapshot();
-	if (settings.speedSource !== "engine" || settings.engineUrl === "") return measured;
+	if (settings.speedSource !== "engine" || settings.engineUrl === "") return keepRates(measured);
 	// tgWindowMs applies to the engine's numbers too: an engine's instantaneous
 	// rate is not an average, and the setting promises an average.
 	const view = probe.view(settings.tgWindowMs);
@@ -266,7 +286,7 @@ function engineSnapshot(): SpeedSnapshot {
 	const frozeThisActivity = !!fin && fin.tg > 0 && !measured.streaming && view.busySince <= fin.resolvedMs;
 	if (view.busy && hasLiveRates && !frozeThisActivity) {
 		const ours = measured.streaming; // pi's own message is the one in flight
-		return {
+		return keepRates({
 			tg: view.liveTg,
 			pp: view.livePp > 0 ? view.livePp : (ours ? measured.pp : 0),
 			// The token/time pair and TTFT describe pi's message. When the engine is
@@ -276,27 +296,35 @@ function engineSnapshot(): SpeedSnapshot {
 			statsTokens: ours ? measured.statsTokens : 0,
 			statsSeconds: ours ? measured.statsSeconds : 0,
 			streaming: ours,
+			// Which of the two is happening this second decides the colour: an engine
+			// keeps reporting its prefill mean during decode, so the value alone
+			// cannot say whether the prompt is still being read.
+			tgLive: view.liveTg > 0,
+			ppLive: view.prefilling && view.livePp > 0,
 			source: "engine",
 			engineName: view.name,
-		};
+		});
 	}
 
 	// 2. the request that just finished, in the engine's own seconds
 	if (fin && fin.tg > 0 && !measured.streaming) {
-		return {
+		return keepRates({
 			tg: fin.tg,
 			pp: fin.pp > 0 ? fin.pp : measured.pp,
 			ttft: fin.ttftS > 0 ? fin.ttftS : measured.ttft,
 			statsTokens: fin.out > 0 ? fin.out : measured.statsTokens,
 			statsSeconds: fin.genSeconds > 0 ? fin.genSeconds : measured.statsSeconds,
 			streaming: false,
+			// Both activities are over: the two averages stay on the bar, dim.
+			tgLive: false,
+			ppLive: false,
 			source: "engine",
 			engineName: view.name,
-		};
+		});
 	}
 
 	// 3. nothing to read (engine down, no --metrics, wrong port): say so, do not hide it
-	return { ...measured, engineName: view.reachable ? view.name : "" };
+	return keepRates({ ...measured, engineName: view.reachable ? view.name : "" });
 }
 
 /** One-line answer to "what is the engine reader seeing right now?". */
@@ -864,8 +892,10 @@ async function runMenu(ctx: ExtensionCommandContext): Promise<void> {
 			const value = current[key];
 			return `${label}: ${typeof value === "boolean" ? (value ? "on" : "off") : String(value)}`;
 		});
-		const choice = await ctx.ui.select("pi-status-plus — change a setting", [...labels, "done"]);
-		if (choice === undefined || choice === "done") return;
+		// No "done" entry: every change is written to disk the moment it is made, so
+		// there is nothing to confirm. Escape (or Ctrl+C) closes the menu.
+		const choice = await ctx.ui.select("pi-status-plus — change a setting", labels);
+		if (choice === undefined) return;
 		const index = labels.indexOf(choice);
 		if (index < 0) return;
 		const field = fields[index]!;

@@ -57,6 +57,13 @@ Line by line, here is what you are looking at.
 
 - `TG 32.4 t/s` — token generation speed, while the engine writes (and for as long as the engine is the one working: an autocompaction, a session summary, another client on the same server)
 - `PP 85.7 t/s` — prefill (prompt processing) speed, shown while the prompt is being read — the moment there is a PP and no TG yet, only the PP is shown
+
+**White means "now", grey means "the average it left behind".** Each rate is white while that activity is
+happening, and stays on the bar in grey (the same colour as the token totals at the start of the line)
+when it stops — so your decode speed does not disappear when the answer finishes, and your prefill speed
+does not disappear when the prompt has been read. Grey is the total average of the last thing that ran:
+the engine's own average over that whole request. When the activity starts again the number goes white.
+A rate that has never been measured at all is simply absent — there is no `TG 0.0` placeholder.
 - `120 tok in 4 s` — the finished response, summarised
 - `TTFT 3.50 s` — the wait before the first character appeared
 
@@ -152,7 +159,7 @@ Small honesty note: while a tool runs (file read, shell command) no tokens are b
 
 ## Configuration
 
-One command, one settings file. Type `/status-plus` for an interactive menu of every setting with its current value, or use direct commands (case-insensitive):
+One command, one settings file. Type `/status-plus` for an interactive menu of every setting with its current value. Every change is written to the settings file the moment you make it — there is nothing to confirm or apply, and `Escape` closes the menu. Or use direct commands (case-insensitive):
 
 ```
 /status-plus layout two-line-b        switch the layout
@@ -171,7 +178,7 @@ Settings persist in `~/.pi/agent/pi-status-plus.json`; a documented example ship
 | --- | --- | --- |
 | `layout` | `two-line-a`, `one-line`, `two-line-b`, `status-line`, `stock` | The overall shape of the bar |
 | `modelDisplay` | `filename`, `full` | Local models by file name only, or full provider-and-path identifier |
-| `tokenSource` | `provider`, `estimate` | Token counts from the provider's usage report (exact) or the extension's own counting |
+| `tokenSource` | `provider`, `estimate` | Which token count to trust: the provider's usage report, or the extension's own running count (see [Token source](#token-source-provider-or-estimate)) |
 | `speedSource` | `engine`, `measured` | Read speeds from the inference engine, or time pi's stream here |
 | `engineUrl` | `http://127.0.0.1:9931` | Where to read engine speeds from (`off` stops trying) |
 | `enginePollMs` | `250` (100–5000) | How often to poll the engine while it is busy |
@@ -197,6 +204,18 @@ Three design choices, explained:
 - The **model name** is shortened only for local models whose identifier is a file path; online identifiers carry no path, so they are left alone.
 
 ---
+
+### Token source: `provider` or `estimate`
+
+Pi gets a token report back with every response: how many input tokens the server read, how many output
+tokens it wrote. That is `provider` — the exact number, and the right choice for any provider that fills
+the report in. `estimate` ignores the report and uses what the extension counted itself as the text
+arrived, which is what you want when the report cannot be trusted: some local servers report only part of
+what they processed, and a report may arrive only at the very end, which leaves the counters blank during
+a long response. The practical difference is small for the speed numbers and visible for the token totals:
+with `estimate` a response's `N tok` is the extension's count of what reached pi, which is usually a
+little lower than the server's own figure when a server counts tokens that a stream does not deliver one
+by one (a speculative-decoding engine, for instance, counts accepted draft tokens).
 
 ## Where the numbers come from
 

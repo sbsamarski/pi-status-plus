@@ -40,6 +40,11 @@ export interface SpeedSnapshot {
 	statsSeconds: number;
 	/** True while a stream is active. */
 	streaming: boolean;
+	/** True while the decode rate is happening right now (shown in white; a kept
+	 *  average from a rate that has stopped is shown dim). */
+	tgLive: boolean;
+	/** True while the prefill rate is happening right now. */
+	ppLive: boolean;
 	/** Where tg/pp/ttft came from: the engine itself, or our own measurement. */
 	source: "engine" | "measured";
 	/** Engine the numbers came from ("" when unknown or measured). */

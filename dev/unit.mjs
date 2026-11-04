@@ -156,12 +156,32 @@ console.log('auto kept as its own item:', mod.statsPartsPlain(parts).endsWith(',
 const speedData = (over, settingsOver) => ({
   speed: { tg: 51.3, pp: 103.4, ttft: 0.91, statsTokens: 112, statsSeconds: 2.09, streaming: false, source: 'engine', engineName: 'basalt', ...over },
   settings: view(settingsOver ?? {}),
+  theme,
 });
+const ink = { fg: (role, text) => `[${role}]${text}` }; // keeps the colour role visible
+const rateFrame = (over, settingsOver) => ({
+  speed: { tg: 51.3, pp: 103.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine', engineName: 'basalt', tgLive: false, ppLive: false, ...over },
+  settings: view(settingsOver ?? {}),
+  theme: ink,
+});
+const decodingFrame = mod.buildSpeedSegment(rateFrame({ tgLive: true }));
+const bothKeptFrame = mod.buildSpeedSegment(rateFrame({}));
+const prefillFrame = mod.buildSpeedSegment(rateFrame({ ppLive: true }));
+console.log('white while decoding:', JSON.stringify(decodingFrame));
+console.log('both dim when idle  :', JSON.stringify(bothKeptFrame));
+console.log('prefill: PP white   :', JSON.stringify(prefillFrame));
+console.log('colour rule OK:',
+  decodingFrame.includes('TG 51.3 t/s') && !decodingFrame.includes('[dim]TG')
+  && bothKeptFrame.includes('[dim]TG 51.3 t/s') && bothKeptFrame.includes('[dim]PP 103.4 t/s')
+  && prefillFrame.includes('PP 103.4 t/s') && !prefillFrame.includes('[dim]PP')
+  && prefillFrame.includes('[dim]TG 51.3 t/s'));
+
 const withMarker = mod.buildSpeedSegment(speedData({}, { showSpeedSource: true }));
 const plain = mod.buildSpeedSegment(speedData({}));
 const measuredPlain = mod.buildSpeedSegment(speedData({ source: 'measured', engineName: '' }));
 // Prefill: the engine is reading the prompt, so there is a PP and no TG yet.
-const prefill = mod.buildSpeedSegment(speedData({ tg: 0, pp: 382.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: true }));
+// A rate that was never measured stays off the bar: no "TG 0.0" placeholder.
+const prefill = mod.buildSpeedSegment(speedData({ tg: 0, pp: 382.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: true, ppLive: true }));
 console.log('speed (marker on):', JSON.stringify(withMarker));
 console.log('speed (default):', JSON.stringify(plain));
 console.log('speed (prefill):', JSON.stringify(prefill));

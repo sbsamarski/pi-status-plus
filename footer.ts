@@ -126,15 +126,16 @@ export function buildSpeedSegment(data: FooterFrameData): string {
 	if (s.showSpeedSource && (speed.tg > 0 || speed.streaming)) {
 		parts.push(speed.source === "engine" ? speed.engineName || "engine" : "measured");
 	}
-	// TG only when there is a decode rate: while the engine is still reading the
-	// prompt there is no decode speed yet, and printing "TG 0.0" there would hide
-	// the PP number that is the only real news at that moment.
-	if (speed.tg > 0) {
-		parts.push(`${s.showSpeedLabels ? "TG " : ""}${speedText(speed.tg)} t/s`);
-	}
-	if (s.showPp && speed.pp > 0) {
-		parts.push(`${s.showSpeedLabels ? "PP " : ""}${speedText(speed.pp)} t/s`);
-	}
+	// Both rates stay on the bar once measured: white while that activity is
+	// happening, dim (the same colour as the token totals at the start of the
+	// line) when it has stopped and the number is the average it left behind.
+	// A rate that has never been measured shows nothing - no "TG 0.0" placeholders.
+	const rate = (label: string, value: number, live: boolean): string => {
+		const text = `${s.showSpeedLabels ? label : ""}${speedText(value)} t/s`;
+		return live || data.theme === undefined ? text : data.theme.fg("dim", text);
+	};
+	if (speed.tg > 0) parts.push(rate("TG ", speed.tg, speed.tgLive === true));
+	if (s.showPp && speed.pp > 0) parts.push(rate("PP ", speed.pp, speed.ppLive === true));
 	if (s.showStats && speed.statsTokens > 0) {
 		const seconds = speed.statsSeconds;
 		const tokens = Math.round(speed.statsTokens);
