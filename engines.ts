@@ -321,6 +321,14 @@ export class EngineProbe {
 		// the bar that describes nothing that is happening now.
 		const latest = inWindow[inWindow.length - 1]!;
 		if ((kind === "tg" ? latest.tg : latest.pp) === 0) return 0;
+		// While the window is still filling, do not divide by what it has.
+		// Each request's token counter starts from zero, so a partially filled
+		// window is a genuine average over a short stretch - it climbs from the
+		// first burst to the true rate, which on screen looks like a number jumping
+		// every refresh for the first seconds of every request. The engine's own
+		// recent rate is steadier and is still the engine's measurement, so the bar
+		// shows that until the window is actually full, then the real window average.
+		if (inWindow[0] !== undefined && latest.t - inWindow[0]!.t < windowMs * 0.8 && raw > 0) return raw;
 		const first = inWindow[0]!;
 		const last = inWindow[inWindow.length - 1]!;
 		const span = last.t - first.t;

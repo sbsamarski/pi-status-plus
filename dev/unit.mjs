@@ -94,7 +94,7 @@ console.log('measured window averages:', measuredWin > 45 && measuredWin < 75 &&
 // withCounter: expose a generated-token counter. flicker: blink "idle" in the
 // middle of the stream, as engines do between chunk groups - the averaging
 // window must survive it, or the average is as jumpy as the raw rate.
-function fakeEngine({ withCounter = true, flicker = false } = {}) {
+function fakeEngine({ withCounter = true, flicker = false, steady = false } = {}) {
   const started = Date.now();
   let polls = 0;
   const server = http.createServer((req, res) => {
@@ -104,7 +104,7 @@ function fakeEngine({ withCounter = true, flicker = false } = {}) {
       const el = Date.now() - started;
       const live = {
         state: flicker && polls % 4 === 3 ? 'idle' : 'generating',
-        tok_s: polls % 2 ? 20 : 80,
+        tok_s: steady ? 50 : polls % 2 ? 20 : 80,
         prefill_tok_s_mean: 400,
         prompt_tokens: 1000,
         generated: withCounter ? Math.round((el * 50) / 1000) : null,
@@ -128,6 +128,25 @@ for (const cfg of [{ withCounter: true }, { withCounter: false }, { withCounter:
   const view = p.view(1500);
   const ok = Math.abs(view.liveTg - 50) < 10 && Math.abs(view.liveTgRaw - 50) > 20 && view.busy;
   console.log(`window 1.5 s (counter=${cfg.withCounter} flicker=${cfg.flicker === true}): ${view.liveTg.toFixed(1)} t/s | instant ${view.liveTgRaw.toFixed(1)} | busy ${view.busy} | steady ~50:`, ok);
+  p.stop();
+  server.close();
+}
+
+// The first seconds of a request must not look like a number racing upward.
+// Each request's token counter starts at zero, so a half-filled window averages
+// a short stretch and climbs from the first burst to the true rate. While that is
+// happening the bar shows the engine's own recent rate instead.
+{
+  const { server, port } = await fakeEngine({ withCounter: true, steady: true });
+  const p = new enginesMod.EngineProbe();
+  p.configure(`http://127.0.0.1:${port}`, 100);
+  p.start();
+  await sleep(600); // window asked for is 1500 ms: nowhere near full
+  const early = p.view(1500).liveTg;
+  await sleep(1500);
+  const full = p.view(1500).liveTg;
+  console.log(`fresh request: ${early.toFixed(1)} t/s | window full: ${full.toFixed(1)} t/s | no ramp-up:`,
+    early > 40 && full > 40 && Math.abs(full - early) < 15);
   p.stop();
   server.close();
 }

@@ -153,7 +153,7 @@ The wait before the first token (network, queue, and the prefill — the server 
 
 | | What it is | Where it comes from |
 | --- | --- | --- |
-| live, white | the average of the last `tgWindowMs` | the engine's own output-token counter over that window (tokens counted ÷ window span); PP is the engine's own prefill mean, which is already the exact average of this prompt so far |
+| live, white | the average of the last `tgWindowMs` | the engine's own output-token counter over that window (tokens counted ÷ window span); PP is the engine's own prefill mean, which is already the exact average of this prompt so far. While the window is still filling — the first `tgWindowMs` of a request, since the engine's token counter restarts — the bar shows the engine's own recent rate instead: dividing by a window that is not full yet makes the number climb from the first burst to the true rate, which reads as flickering |
 | kept, grey | the exact start-to-end average of the last thing that ran | the engine's finished-request record: `decode_tok_s`, and fresh prompt tokens ÷ prompt time |
 
 The finished number is never a window average. Once prefill ends, its average stops moving — the seconds after it ended are not part of it, so averaging across them would print a wrong figure, not a smoother one. The live average, on the other hand, is deliberately a window: it must react when the engine's speed changes mid-response.
