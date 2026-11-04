@@ -118,6 +118,15 @@ The wait before the first token (network, queue, and the prefill — the server 
   engine's name (`⚡ basalt • …`). When no engine can be read — wrong port, llama-server started without
   `--metrics`, offline provider — the same slots are filled from pi's own timing and the segment says
   `⚡ measured • …`. The label is never wrong about which of the two you are looking at.
+- **How smooth the live number is** — `tgWindowMs` is the averaging window, and it applies to both
+  sources. An engine's instantaneous rate is jumpy by nature: it is re-measured over a short recent span,
+  and a chunk boundary or a rejected speculative draft moves it. So while the engine generates, the bar
+  averages its readings over the last `tgWindowMs` — from the engine's own output-token counter when it
+  has one (tokens counted inside the window ÷ the window's span, which *is* the average of the last five
+  seconds), otherwise from the time-weighted mean of the instantaneous readings. `/status-plus engine`
+  prints the averaged number and the instantaneous one side by side, so you can see the difference.
+  The window needs at least a few poll intervals to average anything: keep it at 1000 ms or more with the
+  default 250 ms polling, and below 250 ms the bar shows the instantaneous rate and says so.
 - **TG** — two styles, your choice with `tgMode` (they matter when the number is `measured`; with engine
   numbers the engine decides):
   - `window` — "how fast right now": tokens from the last little while (1 s default, tunable 100 ms–60 s) over the time they actually took. Behaves like llama.cpp's live console rate.
@@ -163,7 +172,7 @@ Settings persist in `~/.pi/agent/pi-status-plus.json`; a documented example ship
 | `tgMode` | `window`, `final` | Live TG formula (only matters when `alignModes` is `off`) |
 | `statsMode` | `gen`, `wall` | The "N tok in S s" time base |
 | `alignModes` | `match`, `off` | Force the displayed TG to agree with the displayed pair |
-| `tgWindowMs` | `1000` (100–60000) | Moving-average length for `window` TG — longer is smoother, slower to react |
+| `tgWindowMs` | `1000` (100–60000) | Averaging window for the live TG and PP, from the engine or measured — longer is smoother, slower to react. Use ≥ 1000 with the default polling |
 | `refreshMs` | `500` (100–10000) | How often the numbers refresh; end-of-response values always appear immediately |
 | `showStats` / `showTtft` / `showPp` | `on` / `off` | Show the pair / TTFT / prefill speed |
 | `showAuto` | `on` / `off` | The auto-compact indicator in the context display |
@@ -236,6 +245,15 @@ Until then the type check reports the pi imports as unresolved — expected, and
 
 - **The speed segment is empty — is it broken?**
   No. Nothing has been measured yet. TG appears the moment text starts flowing; PP and the pair appear when the response completes. Afterwards the last values stay on the bar permanently.
+
+- **The live TG jumps around even though I set a long `tgWindowMs`.**
+  Two things to check. `tgWindowMs` below about four poll intervals has nothing to average — the default
+  polling of 250 ms needs roughly 1000 ms or more. And `/status-plus engine` now prints `averaged over
+  5.0 s (instant 61.0)`: if the two are the same, the window is being ignored because of the first point;
+  if only the averaged one moves, everything is working and the remaining movement is the engine's real
+  speed changing. Note that a long window also means a slow reaction: after a 5 s window the number lags
+  the present by a couple of seconds by design. The finished response's number is never affected — it is
+  the engine's average over the whole response.
 
 - **My TG never matched the engine console. Fixed?**
   Yes, that is what `speedSource engine` is for. Run `/status-plus engine` and it answers three things:

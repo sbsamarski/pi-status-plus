@@ -1,6 +1,6 @@
 {
   "name": "pi-status-plus",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "A complete replacement for the pi coding agent status bar: five selectable layouts, token speeds read from the inference engine itself (basalt, strata, llama.cpp, ik_llama.cpp) with an honest 'measured' fallback, time-to-first-token, token and context accounting, filename-only model display, and a stock fallback that switches live.",
   "type": "module",
   "license": "MIT",

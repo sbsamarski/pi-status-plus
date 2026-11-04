@@ -4,3 +4,10 @@
 node_modules/
 *.staged.ts
 *.log
+
+# Maintainer-local type check config: same as tsconfig.json but with this
+# machine's pi install path filled in. Never commit it - it is not portable.
+tsconfig.local.json
+
+# Files the dev tests stage next to themselves while they run
+dev/*.ts

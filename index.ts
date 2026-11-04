@@ -244,7 +244,9 @@ function measuredSnapshot(): SpeedSnapshot {
 function engineSnapshot(): SpeedSnapshot {
 	const measured = measuredSnapshot();
 	if (settings.speedSource !== "engine" || settings.engineUrl === "") return measured;
-	const view = probe.view();
+	// tgWindowMs applies to the engine's numbers too: an engine's instantaneous
+	// rate is not an average, and the setting promises an average.
+	const view = probe.view(settings.tgWindowMs);
 
 	// 1. the request that just finished, in the engine's own seconds
 	const fin = view.final;
@@ -278,11 +280,19 @@ function engineSnapshot(): SpeedSnapshot {
 
 /** One-line answer to "what is the engine reader seeing right now?". */
 function engineReadout(): string {
-	const v = probe.view();
+	const v = probe.view(settings.tgWindowMs);
 	const parts: string[] = [];
 	parts.push(`url=${v.url || "(off)"}`);
 	parts.push(v.reachable ? `engine=${v.name} [${v.kind}]` : `engine unreachable (${v.note || "no answer"})`);
-	parts.push(v.busy ? `busy: TG ${v.liveTg.toFixed(1)} PP ${v.livePp.toFixed(1)} t/s` : "idle");
+	if (v.busy) {
+		const basis =
+			settings.tgWindowMs >= 250
+				? `TG ${v.liveTg.toFixed(1)} PP ${v.livePp.toFixed(1)} t/s, averaged over ${(settings.tgWindowMs / 1000).toFixed(1)} s (instant ${v.liveTgRaw.toFixed(1)})`
+				: `TG ${v.liveTgRaw.toFixed(1)} PP ${v.livePpRaw.toFixed(1)} t/s, instant (tgWindowMs below 250 ms)`;
+		parts.push(`busy: ${basis}`);
+	} else {
+		parts.push("idle");
+	}
 	const f = v.final;
 	if (f) {
 		parts.push(

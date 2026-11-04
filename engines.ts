@@ -79,10 +79,13 @@ export interface EngineView {
 	reachable: boolean;
 	/** Engine is reading a prompt or generating right now. */
 	busy: boolean;
-	/** Live decode speed from the engine (0 = nothing yet). */
+	/** Live decode speed, averaged over the window passed to view() (0 = none). */
 	liveTg: number;
-	/** Live prefill speed from the engine (0 = nothing yet). */
+	/** Live prefill speed, averaged over the window passed to view(). */
 	livePp: number;
+	/** The same two rates as the engine read them this instant, unaveraged. */
+	liveTgRaw: number;
+	livePpRaw: number;
 	/** The finished request attributed to pi's last assistant message. */
 	final: EngineRequestNumbers | null;
 	/** Which reader is in use: "basalt/strata" or "prometheus" or "none". */
@@ -95,6 +98,22 @@ const REQUEST_TIMEOUT_MS = 700;
 /** How long we keep looking for a finished request to attribute. */
 const ATTRIBUTION_POLL_LIMIT = 8;
 
+/** One live reading, kept so the instantaneous rate can be averaged over a window. */
+interface LiveSample {
+	t: number;
+	/** Decode rate as the engine reported it at t. */
+	tg: number;
+	/** Prefill rate as the engine reported it at t. */
+	pp: number;
+	/** Output tokens counted so far, when the engine exposes such a counter. */
+	tokens: number | null;
+}
+
+/** How far back live samples are kept (longer than any window we average over). */
+const SAMPLE_RETENTION_MS = 60000;
+/** Below this span a "window average" is one or two samples: show the raw rate. */
+const MIN_SMOOTH_SPAN_MS = 250;
+
 export class EngineProbe {
 	private base = "";
 	private name = "";
@@ -104,10 +123,12 @@ export class EngineProbe {
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private pollMs = 250;
 	private busyMs = 0; // 0 = idle, else when the current activity began
-	private liveTg = 0;
+	private liveTg = 0; // raw, as the engine said it this instant
 	private livePp = 0;
 	private liveState = "";
 	private lastFinal: EngineRequestNumbers | null = null;
+	private samples: LiveSample[] = [];
+	private lastTokens: number | null = null;
 
 	// attribution of a finished engine request to pi's assistant message
 	private reqStartMs = 0;
@@ -158,6 +179,8 @@ export class EngineProbe {
 		this.lastFinal = null;
 		this.prevCounters = null;
 		this.reqCounters = null;
+		this.samples = [];
+		this.lastTokens = null;
 	}
 
 	/** pi sent a request: remember when, and the counters as they stood then. */
@@ -169,6 +192,8 @@ export class EngineProbe {
 		this.reqCounters = this.prevCounters;
 		this.promSamplesAfterEnd = 0;
 		this.lastFinal = null; // keep showing the previous answer only until now
+		this.samples = []; // a new request must not be averaged with the previous one
+		this.lastTokens = null;
 		if (!this.stopped) this.schedule(0); // poll soon: the start counters matter
 	}
 
@@ -181,19 +206,115 @@ export class EngineProbe {
 		if (!this.stopped) this.schedule(0); // the engine writes its entry just after the stream
 	}
 
-	/** Current picture for the bar. Cheap: returns the last polled state. */
-	view(): EngineView {
+	/**
+	 * Current picture for the bar. Cheap: nothing is fetched here.
+	 *
+	 * `windowMs` averages the live rates over that many milliseconds of samples;
+	 * 0 returns the engine's instantaneous reading. An engine's instantaneous
+	 * decode rate is jumpy by nature (it is re-measured over a short recent span,
+	 * and a chunk boundary or a speculative-draft miss moves it), so the bar
+	 * passes its tgWindowMs here and the number it prints means what it says.
+	 */
+	view(windowMs = 0): EngineView {
+		const smooth = windowMs >= MIN_SMOOTH_SPAN_MS;
 		return {
 			name: this.name || "engine",
 			url: this.base,
 			reachable: this.reachable,
 			busy: this.busyMs > 0,
-			liveTg: this.liveTg,
-			livePp: this.livePp,
+			liveTg: smooth ? this.smooth("tg", windowMs) : this.liveTg,
+			livePp: smooth ? this.smooth("pp", windowMs) : this.livePp,
+			liveTgRaw: this.liveTg,
+			livePpRaw: this.livePp,
 			final: this.lastFinal,
 			kind: this.kind,
 			note: this.note,
 		};
+	}
+
+	/** Remember what the engine said at this instant, for the window average. */
+	private addSample(tg: number, pp: number, tokens: number | null): void {
+		const now = Date.now();
+		// A counter that went backwards is a new request or an engine restart; an
+		// older sample would turn the delta negative, so the series starts over.
+		if (tokens !== null && this.lastTokens !== null && tokens < this.lastTokens) this.samples = [];
+		if (tokens !== null) this.lastTokens = tokens;
+		this.samples.push({ t: now, tg, pp, tokens });
+		const cutoff = now - SAMPLE_RETENTION_MS;
+		while (this.samples.length > 2 && this.samples[0]!.t < cutoff) this.samples.shift();
+	}
+
+	/** Stop treating the previous request's readings as history. */
+	private clearSamples(): void {
+		if (this.samples.length > 0) this.samples = [];
+		this.lastTokens = null;
+	}
+
+	/**
+	 * The engine's rate averaged over the last windowMs.
+	 *
+	 * Preferred, whenever the engine exposes an output-token counter: tokens
+	 * counted inside the window divided by the window's own span. That IS "the
+	 * average of the last five seconds", with no estimating involved.
+	 *
+	 * Fallback: the time-weighted mean of the instantaneous readings, which is the
+	 * integral of the rate over the window divided by the window - the same
+	 * answer, from readings instead of from a counter.
+	 *
+	 * Fewer than two samples (a window shorter than a few poll intervals) returns
+	 * the raw reading, because there is nothing to average yet.
+	 */
+	private smooth(kind: "tg" | "pp", windowMs: number): number {
+		const raw = kind === "tg" ? this.liveTg : this.livePp;
+		const now = Date.now();
+		const inWindow = this.samples.filter((s) => s.t >= now - windowMs);
+		if (inWindow.length < 2) return raw;
+		const first = inWindow[0]!;
+		const last = inWindow[inWindow.length - 1]!;
+		const span = last.t - first.t;
+
+		if (kind === "tg" && span >= MIN_SMOOTH_SPAN_MS && first.tokens !== null && last.tokens !== null) {
+			let monotonic = true;
+			for (let i = 1; i < inWindow.length; i++) {
+				const prev = inWindow[i - 1]!.tokens;
+				const cur = inWindow[i]!.tokens;
+				if (prev === null || cur === null || cur < prev) {
+					monotonic = false;
+					break;
+				}
+			}
+			const delta = last.tokens - first.tokens;
+			if (monotonic && delta >= 1) return (delta / span) * 1000;
+		}
+
+		let weighted = 0;
+		let weights = 0;
+		for (let i = 0; i < inWindow.length; i++) {
+			const endT = i + 1 < inWindow.length ? inWindow[i + 1]!.t : Math.max(now, last.t);
+			const weight = endT - inWindow[i]!.t;
+			const value = kind === "tg" ? inWindow[i]!.tg : inWindow[i]!.pp;
+			// Zero readings are the prefill phase for TG (and vice versa): they
+			// belong to a different number, so they must not dilute this average.
+			if (weight > 0 && value > 0) {
+				weighted += value * weight;
+				weights += weight;
+			}
+		}
+		return weights > 0 ? weighted / weights : raw;
+	}
+
+	/** Tokens generated in the current request, when the engine tells us. */
+	private requestTokens(data: Record<string, unknown>): number | null {
+		const live = (data.live ?? data.status ?? {}) as Record<string, unknown>;
+		const fromLive = num(live.generated) ?? num(live.output_tokens);
+		if (fromLive !== undefined) return fromLive;
+		if (Array.isArray(data.slots)) {
+			for (const slot of data.slots) {
+				const generated = num((slot as Record<string, unknown>)?.generated);
+				if (generated !== undefined) return generated;
+			}
+		}
+		return null;
 	}
 
 	// --- polling loop ------------------------------------------------------
@@ -330,6 +451,8 @@ export class EngineProbe {
 		if (!busy && this.busyMs > 0) this.busyMs = 0;
 		this.liveTg = num(live.tok_s) ?? this.slotLiveTg(data) ?? (busy ? this.liveTg : 0);
 		this.livePp = num(live.prefill_tok_s_mean) ?? num(live.prefill_tok_s) ?? (busy ? this.livePp : 0);
+		if (busy) this.addSample(this.liveTg, this.livePp, this.requestTokens(data));
+		else this.clearSamples();
 
 		// the request that just finished, if the engine has written its entry
 		if (this.reqStartMs > 0 && this.reqEndMs > 0 && this.reqTries < ATTRIBUTION_POLL_LIMIT) {
@@ -448,6 +571,8 @@ export class EngineProbe {
 			}
 		}
 		this.prevCounters = counters;
+		if (this.busyMs > 0) this.addSample(this.liveTg, this.livePp, counters.predTokens);
+		else this.clearSamples();
 
 		// attribute the finished request from its own counter window
 		if (this.reqCounters && this.reqEndMs > 0 && this.reqTries < ATTRIBUTION_POLL_LIMIT) {

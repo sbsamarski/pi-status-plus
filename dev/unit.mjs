@@ -1,13 +1,14 @@
 // Stage the extension sources next to this script (strip-types needs the
 // relative imports to resolve), run, then clean up.
+import http from "node:http";
 import { readFileSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
-for (const f of ["engine.ts", "footer.ts", "settings.ts", "types.ts"]) {
+for (const f of ["engine.ts", "engines.ts", "footer.ts", "settings.ts", "types.ts"]) {
 	let src = readFileSync(join(root, f), "utf8");
-	for (const m of ["engine", "footer", "settings", "types"]) {
+	for (const m of ["engine", "engines", "footer", "settings", "types"]) {
 		src = src.replaceAll(`from "./${m}.js"`, `from "./${m}.ts"`);
 	}
 
@@ -73,6 +74,65 @@ for (let i = 0; i < 10; i++) {
 }
 console.log('weighted counted after 10 chunks:', Math.round(e2.counted), '(expect ~20)');
 console.log('ratio test OK:', Math.abs(e2.learnedTokensPerEvent - 2) < 0.01 && Math.abs(e2.counted - 20) < 1);
+// --- the tgWindowMs average, on both speed sources --------------------------
+const enginesMod = await import('./engines.ts');
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Measured path (pi-side timing): 20 t/s for one second, then 100 t/s for one
+// second. A 5 s window must report the average of what happened (~60), not the
+// speed of the moment (~100).
+const eng = new engineMod.SpeedEngine();
+const base = Date.now();
+eng.start(base);
+eng.markFirst(base + 100);
+for (let i = 0; i < 20; i++) { await sleep(50); eng.recordTokens(1, undefined, true); }  // 1 tok / 50 ms = 20 t/s
+for (let i = 0; i < 20; i++) { await sleep(50); eng.recordTokens(5, undefined, true); }  // 5 tok / 50 ms = 100 t/s
+const measuredWin = eng.tgWindow(5000);
+const lastInstant = eng.tgWindow(300);
+console.log('measured: 5 s window', measuredWin.toFixed(1), 't/s | last 0.3 s', lastInstant.toFixed(1), 't/s');
+console.log('measured window averages:', measuredWin > 45 && measuredWin < 75 && lastInstant > 80);
+
+// Engine path: a fake basalt that generates at a true 50 t/s while its
+// instantaneous rate alternates 20/80. The windowed view must land on ~50.
+function fakeEngine(withCounter) {
+  const started = Date.now();
+  let polls = 0;
+  const server = http.createServer((req, res) => {
+    if (req.url === '/health') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ status: 'ok', service: 'basalt' })); return; }
+    if (req.url === '/metrics') {
+      polls++;
+      const el = Date.now() - started;
+      const live = {
+        state: 'generating',
+        tok_s: polls % 2 ? 20 : 80,
+        prefill_tok_s_mean: 400,
+        prompt_tokens: 1000,
+        generated: withCounter ? Math.round((el * 50) / 1000) : null,
+        elapsed_s: el / 1000,
+      };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ engine: 'basalt', live, requests: [] }));
+      return;
+    }
+    res.writeHead(404); res.end();
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port })));
+}
+
+for (const withCounter of [true, false]) {
+  const { server, port } = await fakeEngine(withCounter);
+  const p = new enginesMod.EngineProbe();
+  p.configure(`http://127.0.0.1:${port}`, 100);
+  p.start();
+  await sleep(1800);
+  const windowed = p.view(1500).liveTg;
+  const instant = p.view(0).liveTgRaw;
+  const ok = Math.abs(windowed - 50) < 10 && Math.abs(instant - 50) > 20;
+  console.log(`engine: counter=${withCounter} -> 1.5 s window ${windowed.toFixed(1)} t/s | instant ${instant.toFixed(1)} t/s | averaged to ~50:`, ok);
+  p.stop();
+  server.close();
+}
+
 // --- the context piece and the speed source marker (visible format) ----------
 const settingsMod = await import('./settings.ts');
 const theme = { fg: (_c, t) => t };
@@ -105,7 +165,7 @@ console.log('speed source marker OK:',
   fromEngine === '\u26a1 basalt \u2022 TG 51.3 t/s \u2022 PP 103.4 t/s \u2022 112 tok in 2 s \u2022 TTFT 0.91 s'
   && fromPi.includes('measured \u2022 TG'));
 
-for (const f of ["engine.ts", "footer.ts", "settings.ts", "types.ts"]) {
+for (const f of ["engine.ts", "engines.ts", "footer.ts", "settings.ts", "types.ts"]) {
 	rmSync(join(here, f), { force: true });
 }
 console.log('unit OK');
