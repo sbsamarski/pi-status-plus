@@ -42,14 +42,11 @@ for (let i = 1; i <= 10; i++) {
 }
 e.reconcile(100, 300);
 e.stop(Date.now());
-const pairGen = e.statsPair('provider', 'gen');
-const pairWall = e.statsPair('provider', 'wall');
+const pairGen = e.statsPair('provider');
 console.log('TTFT s:', (e.ttftMs()/1000).toFixed(2));
-console.log('tgGen:', e.tgGen().toFixed(1), 'tgWall:', e.tgWall().toFixed(1));
+console.log('tgGen:', e.tgGen().toFixed(1));
 console.log('pairGen:', pairGen.tokens, 'tok in', pairGen.seconds.toFixed(1), 's -> implied', (pairGen.tokens/pairGen.seconds).toFixed(1));
-console.log('pairWall:', pairWall.tokens, 'tok in', pairWall.seconds.toFixed(1), 's -> implied', (pairWall.tokens/pairWall.seconds).toFixed(1));
-console.log('match gen speed == implied gen pair:', Math.abs(e.tgDisplayed(1000,'window','gen','match') - pairGen.tokens/pairGen.seconds) < 0.2);
-console.log('match wall speed == implied wall pair:', Math.abs(e.tgDisplayed(1000,'window','wall','match') - pairWall.tokens/pairWall.seconds) < 0.2);
+console.log('one time base: gen speed == implied pair:', Math.abs(e.tgDisplayed(1000,'window','match') - pairGen.tokens/pairGen.seconds) < 0.2);
 console.log('pp:', e.ppSpeed().toFixed(1), '(expect 300 input / 0.5 s = 600)');
 
 // Learned tokens-per-event ratio: provider packs 2 tokens per chunk.
@@ -94,7 +91,10 @@ console.log('measured window averages:', measuredWin > 45 && measuredWin < 75 &&
 
 // Engine path: a fake basalt that generates at a true 50 t/s while its
 // instantaneous rate alternates 20/80. The windowed view must land on ~50.
-function fakeEngine(withCounter) {
+// withCounter: expose a generated-token counter. flicker: blink "idle" in the
+// middle of the stream, as engines do between chunk groups - the averaging
+// window must survive it, or the average is as jumpy as the raw rate.
+function fakeEngine({ withCounter = true, flicker = false } = {}) {
   const started = Date.now();
   let polls = 0;
   const server = http.createServer((req, res) => {
@@ -103,7 +103,7 @@ function fakeEngine(withCounter) {
       polls++;
       const el = Date.now() - started;
       const live = {
-        state: 'generating',
+        state: flicker && polls % 4 === 3 ? 'idle' : 'generating',
         tok_s: polls % 2 ? 20 : 80,
         prefill_tok_s_mean: 400,
         prompt_tokens: 1000,
@@ -119,16 +119,58 @@ function fakeEngine(withCounter) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port })));
 }
 
-for (const withCounter of [true, false]) {
-  const { server, port } = await fakeEngine(withCounter);
+for (const cfg of [{ withCounter: true }, { withCounter: false }, { withCounter: true, flicker: true }]) {
+  const { server, port } = await fakeEngine(cfg);
   const p = new enginesMod.EngineProbe();
   p.configure(`http://127.0.0.1:${port}`, 100);
   p.start();
   await sleep(1800);
-  const windowed = p.view(1500).liveTg;
-  const instant = p.view(0).liveTgRaw;
-  const ok = Math.abs(windowed - 50) < 10 && Math.abs(instant - 50) > 20;
-  console.log(`engine: counter=${withCounter} -> 1.5 s window ${windowed.toFixed(1)} t/s | instant ${instant.toFixed(1)} t/s | averaged to ~50:`, ok);
+  const view = p.view(1500);
+  const ok = Math.abs(view.liveTg - 50) < 10 && Math.abs(view.liveTgRaw - 50) > 20 && view.busy;
+  console.log(`window 1.5 s (counter=${cfg.withCounter} flicker=${cfg.flicker === true}): ${view.liveTg.toFixed(1)} t/s | instant ${view.liveTgRaw.toFixed(1)} | busy ${view.busy} | steady ~50:`, ok);
+  p.stop();
+  server.close();
+}
+
+// Finished numbers are the engine's own start-to-end averages, not a window that
+// kept running after the activity stopped. The engine here generates with jumpy
+// live rates, then goes idle and writes its record for the request.
+function finishedEngine() {
+  const started = Date.now();
+  const requestTime = Date.now() / 1000;
+  let polls = 0;
+  const server = http.createServer((req, res) => {
+    if (req.url === '/health') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ status: 'ok', service: 'basalt' })); return; }
+    if (req.url === '/metrics') {
+      polls++;
+      const done = polls > 12; // ~1.2 s of generating, then the request finishes
+      const live = done
+        ? { state: 'idle', tok_s: null, prefill_tok_s_mean: null, prompt_tokens: null, generated: null, elapsed_s: null }
+        : { state: 'generating', tok_s: polls % 2 ? 20 : 80, prefill_tok_s_mean: 400, prompt_tokens: 1000, generated: polls * 3, elapsed_s: polls / 10 };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        engine: 'basalt',
+        live,
+        requests: done ? [{ id: 'r_7', time: requestTime, duration_s: 20, ttft_s: 1.5, prompt_tokens: 1000, reused: 200, output_tokens: 866, prompt_ms: 2000, decode_tok_s: 48 }] : [],
+      }));
+      return;
+    }
+    res.writeHead(404); res.end();
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port })));
+}
+{
+  const { server, port } = await finishedEngine();
+  const p = new enginesMod.EngineProbe();
+  p.configure(`http://127.0.0.1:${port}`, 100);
+  p.start();
+  // The engine stops generating ~1.2 s in; the reader holds the activity open for
+  // a short grace after that, then reads the record the engine wrote.
+  await sleep(3200);
+  const f = p.view(3000).final;
+  console.log('finished numbers:', JSON.stringify(f && { tg: f.tg, pp: f.pp, out: f.out, genSeconds: f.genSeconds, id: f.id }));
+  console.log('exact start-to-end averages, adopted without our attribution:',
+    !!f && f.tg === 48 && f.pp === 400 && f.out === 866 && Math.abs(f.genSeconds - 18.5) < 0.01);
   p.stop();
   server.close();
 }

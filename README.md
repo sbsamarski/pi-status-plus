@@ -146,10 +146,17 @@ The wait before the first token (network, queue, and the prefill — the server 
   - `window` — "how fast right now": tokens from the last little while (1 s default, tunable 100 ms–60 s) over the time they actually took. Behaves like llama.cpp's live console rate.
   - `final` — "how fast overall": the finished response's output tokens over generation time. The honest average.
 - **PP** — measured once per response: *new* (non-cached) prompt tokens over the prefill wait. With a warm cache it can look absurdly high — correctly so, because those tokens were never re-read.
-- **The "N tok in S s" pair** — the finished response, frozen on the bar. Two time bases via `statsMode`:
-  - `gen` *(default)* — first token to end. Implied speed matches llama.cpp's "eval rate" and per-response stamps from tools like pi-stamp-plus.
-  - `wall` — request to end, *including* the TTFT wait. This is what the older token-speed extensions showed; it always reads lower than `gen` by exactly your TTFT. Neither lies — they answer different questions.
-- **Alignment** — `alignModes match` (default) forces the displayed TG to use the same formula as the displayed pair. With it on, the t/s you see is *always* exactly `N ÷ S` — no exceptions.
+- **The "N tok in S s" pair** — the finished response, over generation time: first token to end. Its implied rate equals llama.cpp's "eval rate" and the per-response stamps from tools like pi-stamp-plus. There is one time base on purpose: dividing output tokens by the whole request (prefill wait included) reports a speed for a period in which no tokens were written, and the figure moves with prompt size instead of with writing speed, so that option is gone.
+- **Alignment** — `alignModes match` (default) keeps the TG and the pair on that same span: the window average while the engine writes, the whole-generation average when it stops. With it on, the t/s you see is *always* exactly `N ÷ S` — no exceptions.
+
+**How the live and the finished numbers differ, precisely.**
+
+| | What it is | Where it comes from |
+| --- | --- | --- |
+| live, white | the average of the last `tgWindowMs` | the engine's own output-token counter over that window (tokens counted ÷ window span); PP is the engine's own prefill mean, which is already the exact average of this prompt so far |
+| kept, grey | the exact start-to-end average of the last thing that ran | the engine's finished-request record: `decode_tok_s`, and fresh prompt tokens ÷ prompt time |
+
+The finished number is never a window average. Once prefill ends, its average stops moving — the seconds after it ended are not part of it, so averaging across them would print a wrong figure, not a smoother one. The live average, on the other hand, is deliberately a window: it must react when the engine's speed changes mid-response.
 
 **One honest caveat about live counting.** While a response streams, pi delivers text as a series of events, and not every provider sends exactly one token per event — some pack several tokens into one chunk. The frozen numbers are always exact (they come from the provider's usage report). The live number starts as an estimate and gets smarter: at each response's end the extension measures how many real tokens each event carried, and weights the next response's live counting with that learned ratio. For strict per-token streamers like llama.cpp the ratio is 1.0 and changes nothing.
 
@@ -165,7 +172,6 @@ One command, one settings file. Type `/status-plus` for an interactive menu of e
 /status-plus layout two-line-b        switch the layout
 /status-plus showTtft off             hide the time-to-first-token
 /status-plus tgwindow 5000            set the live TG window to 5 seconds
-/status-plus statsMode gen            choose the pair's time base
 /status-plus engine                   what the engine reader sees right now
 /status-plus engineUrl http://127.0.0.1:8080   read a different server ("off" for none)
 /status-plus speedSource measured     stop reading the engine
@@ -184,7 +190,6 @@ Settings persist in `~/.pi/agent/pi-status-plus.json`; a documented example ship
 | `enginePollMs` | `250` (100–5000) | How often to poll the engine while it is busy |
 | `showSpeedSource` | `on` / `off` (default `off`) | Put the engine name or `measured` at the start of the speed segment; `/status-plus engine` reports it either way |
 | `tgMode` | `window`, `final` | Live TG formula (only matters when `alignModes` is `off`) |
-| `statsMode` | `gen`, `wall` | The "N tok in S s" time base |
 | `alignModes` | `match`, `off` | Force the displayed TG to agree with the displayed pair |
 | `tgWindowMs` | `1000` (100–60000) | Averaging window for the live TG and PP, from the engine or measured — longer is smoother, slower to react. Use ≥ 1000 with the default polling |
 | `refreshMs` | `500` (100–10000) | How often the numbers refresh; end-of-response values always appear immediately |
@@ -242,7 +247,7 @@ sees: request start, each arriving piece of text, and the response end with the 
 
 - The same moments are measured as you would with a stopwatch, and the running tally is reconciled against the provider's token report at every response end.
 - **The frozen numbers after a response are exact by construction.** The live numbers are estimates that converge, as described above.
-- For llama.cpp / ik_llama.cpp users: the frozen TG matches the server's eval rate (with `statsMode gen`), and PP reflects genuinely *new* prompt tokens — which is why it can legitimately exceed the server's cold-prefill numbers once your context warms up.
+- For llama.cpp / ik_llama.cpp users: the frozen TG matches the server's eval rate, and PP reflects genuinely *new* prompt tokens — which is why it can legitimately exceed the server's cold-prefill numbers once your context warms up.
 
 ---
 
@@ -298,10 +303,10 @@ Until then the type check reports the pi imports as unresolved — expected, and
   llama-server started without `--metrics`, which has no counters to read.
 
 - **Why is my live TG different from the frozen TG of the same response?**
-  Live = a moving average of recent events (an estimate). Frozen = the provider's exact usage report. With `alignModes match` + `statsMode gen` the frozen TG equals the frozen pair's implied speed to the digit, and matches the server console's eval rate.
+  They answer different questions. Live is the average of the last `tgWindowMs` — it has to move, or it would be useless as feedback while a response runs. Frozen is the exact average over the whole generation, from the engine's own record of that request, and it equals the pair's implied rate to the digit and matches the server console's eval rate.
 
-- **Why is the pair's implied speed lower than the stamps or the console?**
-  You are in `statsMode wall`, which includes the prefill wait in the seconds. Switch to `gen` for generation-only. Wall is not wrong — it answers "how fast did the whole round trip go" instead of "how fast did the model write".
+- **PP kept changing for a couple of seconds after the prompt had been read.**
+  It no longer does. That was a window average being applied to a finished activity: the window still held prefill samples while newer samples of a different phase (decode) diluted them, so the figure drifted for as long as the window was longer than the prefill. A finished prefill now shows the engine's own start-to-end average and stops moving the moment the prefill stops.
 
 - **Does it work with ik_llama.cpp? OpenRouter? Anthropic?**
   It reads only what pi sees, so any provider works. The speed semantics were designed and verified against llama.cpp, ik_llama.cpp, and OpenRouter-style endpoints.

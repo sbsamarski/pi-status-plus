@@ -120,6 +120,16 @@ interface LiveSample {
 const SAMPLE_RETENTION_MS = 60000;
 /** Below this span a "window average" is one or two samples: show the raw rate. */
 const MIN_SMOOTH_SPAN_MS = 250;
+/** An engine that stops answering "busy" for less than this is still working:
+ *  one poll reading "idle" in the middle of a stream must not end the activity,
+ *  or every window and every number on the bar would stutter with it. */
+const BUSY_GRACE_MS = 700;
+/** How long the engine must be idle before the live sample series is dropped. */
+const IDLE_SERIES_CLEAR_MS = 4000;
+/** Keep polling fast this long after activity ended: the engine writes the
+ *  finished request's record just after the stream closes, and the exact averages
+ *  on the bar depend on reading it promptly. */
+const FINISHED_LOOKUP_MS = 4000;
 
 export class EngineProbe {
 	private base = "";
@@ -134,6 +144,9 @@ export class EngineProbe {
 	private livePp = 0;
 	private liveState = "";
 	private prefillingNow = false;
+	private lastBusyAt = 0;
+	private idleSince = 0;
+	private lastAdoptedId = "";
 	private lastFinal: EngineRequestNumbers | null = null;
 	private samples: LiveSample[] = [];
 	private lastTokens: number | null = null;
@@ -224,7 +237,10 @@ export class EngineProbe {
 	 * passes its tgWindowMs here and the number it prints means what it says.
 	 */
 	view(windowMs = 0): EngineView {
-		const smooth = windowMs >= MIN_SMOOTH_SPAN_MS;
+		// Nothing to average while the engine is not working: the series still holds
+		// the last activity's samples, and reporting their average as a live rate
+		// would put a moving number on a bar that has nothing running.
+		const smooth = windowMs >= MIN_SMOOTH_SPAN_MS && this.busyMs > 0;
 		return {
 			name: this.name || "engine",
 			url: this.base,
@@ -233,7 +249,12 @@ export class EngineProbe {
 			busySince: this.busyMs,
 			prefilling: this.prefillingNow,
 			liveTg: smooth ? this.smooth("tg", windowMs) : this.liveTg,
-			livePp: smooth ? this.smooth("pp", windowMs) : this.livePp,
+			// An engine that publishes a prefill mean (basalt, strata) is already
+			// giving the exact average from the start of this prompt to this moment,
+			// so that number is shown as it is: re-averaging it over a window would
+			// keep moving for seconds after the prefill ended, which is a wrong
+			// average, not a smoother one. Counter-only engines get the window.
+			livePp: smooth && this.kind !== "json" ? this.smooth("pp", windowMs) : this.livePp,
 			liveTgRaw: this.liveTg,
 			livePpRaw: this.livePp,
 			final: this.lastFinal,
@@ -247,6 +268,7 @@ export class EngineProbe {
 		const now = Date.now();
 		// A counter that went backwards is a new request or an engine restart; an
 		// older sample would turn the delta negative, so the series starts over.
+		this.idleSince = 0;
 		if (tokens !== null && this.lastTokens !== null && tokens < this.lastTokens) this.samples = [];
 		if (tokens !== null) this.lastTokens = tokens;
 		this.samples.push({ t: now, tg, pp, tokens });
@@ -258,6 +280,20 @@ export class EngineProbe {
 	private clearSamples(): void {
 		if (this.samples.length > 0) this.samples = [];
 		this.lastTokens = null;
+	}
+
+	/**
+	 * The engine just said it is idle. Keep the series a while.
+	 *
+	 * Dropping it on the first idle reading looks tidy and is wrong in practice:
+	 * engines blink "idle" between chunk groups, and each blink would throw the
+	 * averaging window away and start it over - which makes the displayed average
+	 * jump exactly as much as the raw rate did, the opposite of what a window is
+	 * for. Only a sustained idle means the readings are history.
+	 */
+	private noteIdle(): void {
+		if (this.idleSince === 0) this.idleSince = Date.now();
+		if (Date.now() - this.idleSince > IDLE_SERIES_CLEAR_MS) this.clearSamples();
 	}
 
 	/**
@@ -289,7 +325,10 @@ export class EngineProbe {
 		const last = inWindow[inWindow.length - 1]!;
 		const span = last.t - first.t;
 
-		if (kind === "tg" && span >= MIN_SMOOTH_SPAN_MS && first.tokens !== null && last.tokens !== null) {
+		// The counter method needs a real span: over a few hundred ms a speculative
+		// engine hands out tokens in bursts and the delta is a burst, not a rate.
+		const minSpan = Math.max(MIN_SMOOTH_SPAN_MS, Math.min(1000, windowMs / 2));
+		if (kind === "tg" && span >= minSpan && first.tokens !== null && last.tokens !== null) {
 			let monotonic = true;
 			for (let i = 1; i < inWindow.length; i++) {
 				const prev = inWindow[i - 1]!.tokens;
@@ -353,7 +392,10 @@ export class EngineProbe {
 	private nextDelay(): number {
 		if (!this.reachable) return Math.min(5000, this.pollMs * 4);
 		if (this.busyMs > 0 || this.reqTries > 0) return this.pollMs;
-		return Math.max(this.pollMs * 6, 1500); // idle: stay cheap, still notice restarts
+		// Just finished: the engine is about to write the record with the exact
+		// averages, so stay fast instead of dropping to the idle cadence.
+		if (Date.now() - this.lastBusyAt < FINISHED_LOOKUP_MS) return this.pollMs;
+		return Math.max(this.pollMs * 6, 1500); // long idle: stay cheap, still notice restarts
 	}
 
 	private async poll(): Promise<void> {
@@ -463,18 +505,26 @@ export class EngineProbe {
 		const state = typeof live.state === "string" ? live.state.toLowerCase() : "";
 		this.liveState = state;
 		const busy = state !== "" && state !== "idle" && state !== "waiting" && state !== "sleeping";
-		if (busy && this.busyMs === 0) this.busyMs = Date.now();
-		if (!busy && this.busyMs > 0) this.busyMs = 0;
+		if (busy) {
+			this.lastBusyAt = Date.now();
+			if (this.busyMs === 0) this.busyMs = this.lastBusyAt;
+		} else if (this.busyMs > 0 && Date.now() - this.lastBusyAt > BUSY_GRACE_MS) {
+			this.busyMs = 0;
+		}
+		const active = busy || Date.now() - this.lastBusyAt <= BUSY_GRACE_MS;
 		// Reading a prompt: there is no decode rate yet, and the engine says so by
 		// leaving tok_s empty. Do not carry the previous request's rate into that.
 		const prefilling = /read|prefill|prompt|queue|load/.test(state);
 		this.prefillingNow = prefilling && busy;
-		this.liveTg = prefilling ? 0 : (num(live.tok_s) ?? this.slotLiveTg(data) ?? (busy ? this.liveTg : 0));
+		this.liveTg = prefilling ? 0 : (num(live.tok_s) ?? this.slotLiveTg(data) ?? (active ? this.liveTg : 0));
 		// The engine's prefill mean outlives the prefill itself (it describes the
 		// prompt that was just read), so PP stays on the bar during decode too.
-		this.livePp = num(live.prefill_tok_s_mean) ?? num(live.prefill_tok_s) ?? (busy ? this.livePp : 0);
+		this.livePp = num(live.prefill_tok_s_mean) ?? num(live.prefill_tok_s) ?? (active ? this.livePp : 0);
 		if (busy) this.addSample(this.liveTg, this.livePp, this.requestTokens(data));
-		else this.clearSamples();
+		else this.noteIdle();
+
+		// the request that just finished, if the engine has written its entry
+		this.adoptFinishedActivity(data);
 
 		// the request that just finished, if the engine has written its entry
 		if (this.reqStartMs > 0 && this.reqEndMs > 0 && this.reqTries < ATTRIBUTION_POLL_LIMIT) {
@@ -485,6 +535,28 @@ export class EngineProbe {
 				this.reqEndMs = 0; // attributed: stop looking
 			}
 		}
+	}
+
+	/**
+	 * Adopt whatever the engine did last, even when it was not our request.
+	 *
+	 * A compaction, a session summary or another client's call never reaches
+	 * beginRequest(), so nothing attributes it - and without this the bar would
+	 * keep showing whatever live average was on screen when it ended, which is a
+	 * window average, not the start-to-end average the finished numbers must be.
+	 * The engine wrote the exact figures into its own record, so take those.
+	 */
+	private adoptFinishedActivity(data: Record<string, unknown>): void {
+		if (this.busyMs > 0 || this.lastBusyAt === 0) return;
+		const list = data.requests;
+		if (!Array.isArray(list) || list.length === 0) return;
+		const newest = list[0] as Record<string, unknown>;
+		const id = typeof newest.id === "string" ? newest.id : "";
+		if (id !== "" && id === this.lastAdoptedId) return;
+		const numbers = this.requestNumbers(newest);
+		if (!numbers || numbers.tg <= 0) return; // still running or not written yet
+		this.lastAdoptedId = id;
+		this.lastFinal = numbers;
 	}
 
 	/** /slots carries the same live numbers on engines without a live block. */
@@ -533,26 +605,43 @@ export class EngineProbe {
 			continue;
 		}
 		if (!chosen) return null;
+		const numbers = this.requestNumbers(chosen);
+		if (!numbers) return null;
+		if (numbers.out <= 0 && this.reqOut > 0) numbers.out = this.reqOut;
+		this.lastAdoptedId = numbers.id; // do not adopt the same record again later
+		return numbers;
+	}
 
-		const out = firstNum(num(chosen.output_tokens), num(chosen.completion_tokens), num(chosen.generated)) ?? 0;
-		const tg = firstNum(num(chosen.decode_tok_s), num(chosen.tok_s), num(chosen.decode_tps), num(chosen.eval_tok_s)) ?? 0;
-		const ttftS = firstNum(num(chosen.ttft_s), num(chosen.time_to_first_token_s), num(chosen.ttft)) ?? 0;
-		const durationS = firstNum(num(chosen.duration_s), num(chosen.elapsed_s)) ?? 0;
-		const promptTokens = firstNum(num(chosen.prompt_tokens), num(chosen.prompt)) ?? 0;
-		const reused = firstNum(num(chosen.reused), num(chosen.cached_tokens)) ?? 0;
-		const promptMs = firstNum(num(chosen.prompt_ms), num(chosen.prefill_ms)) ?? 0;
+	/**
+	 * One finished engine record, in the numbers the bar needs. Returns null while
+	 * the request is still running (no decode rate written yet).
+	 *
+	 * These are the engine's own start-to-end figures: decode_tok_s is output
+	 * tokens over the whole decode phase, and PP is the fresh prompt tokens (the
+	 * cached part never re-read) over the time the prompt actually took. Nothing
+	 * here is averaged over a trailing window, so a finished number is the real
+	 * average of that request and nothing else.
+	 */
+	private requestNumbers(entry: Record<string, unknown>): EngineRequestNumbers | null {
+		const out = firstNum(num(entry.output_tokens), num(entry.completion_tokens), num(entry.generated)) ?? 0;
+		const tg = firstNum(num(entry.decode_tok_s), num(entry.tok_s), num(entry.decode_tps), num(entry.eval_tok_s)) ?? 0;
+		const ttftS = firstNum(num(entry.ttft_s), num(entry.time_to_first_token_s), num(entry.ttft)) ?? 0;
+		const durationS = firstNum(num(entry.duration_s), num(entry.elapsed_s)) ?? 0;
+		const promptTokens = firstNum(num(entry.prompt_tokens), num(entry.prompt)) ?? 0;
+		const reused = firstNum(num(entry.reused), num(entry.cached_tokens)) ?? 0;
+		const promptMs = firstNum(num(entry.prompt_ms), num(entry.prefill_ms)) ?? 0;
 		const fresh = promptTokens - reused;
 		const pp = promptMs > 0 && fresh > 0 ? (fresh / promptMs) * 1000 : 0;
 		const genSeconds = durationS > ttftS ? durationS - ttftS : out > 0 && tg > 0 ? out / tg : 0;
-		const at = firstNum(num(chosen.time), num(chosen.timestamp)) ?? 0;
+		const at = firstNum(num(entry.time), num(entry.timestamp)) ?? 0;
 
 		return {
 			tg,
 			pp,
 			ttftS,
-			out: out > 0 ? out : this.reqOut,
+			out,
 			genSeconds,
-			id: typeof chosen.id === "string" ? chosen.id : "",
+			id: typeof entry.id === "string" ? entry.id : "",
 			startMs: at < 1e12 ? at * 1000 : at,
 			resolvedMs: Date.now(),
 		};
@@ -597,7 +686,7 @@ export class EngineProbe {
 		}
 		this.prevCounters = counters;
 		if (this.busyMs > 0) this.addSample(this.liveTg, this.livePp, counters.predTokens);
-		else this.clearSamples();
+		else this.noteIdle();
 
 		// attribute the finished request from its own counter window
 		if (this.reqCounters && this.reqEndMs > 0 && this.reqTries < ATTRIBUTION_POLL_LIMIT) {

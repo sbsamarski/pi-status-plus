@@ -17,10 +17,10 @@
  *   stock       — the stock pi footer, untouched (extension idles; any other
  *                 layout re-installs the custom footer live, no /reload needed)
  *
- * Speeds are computed from pi-visible events only (llama-server's own timings
- * never reach pi). TG "window" ≈ llama-server's live eval rate; TG "final" =
- * output tokens / generation time matches the "N tok in S s" pair when
- * statsMode is "gen"; statsMode "wall" matches the old TPS average. See engine.ts.
+ * Speeds use one time base: generation (first token to end), which is what
+ * llama-server's own "eval rate" means. TG "window" is the average over the last
+ * tgWindowMs while the engine writes; TG "final" is output tokens over the whole
+ * generation, and it matches the "N tok in S s" pair exactly. See engine.ts.
  *
  * The MCP segment is read from the extension status line that pi-mcp-adapter
  * publishes under the key "mcp" — the same text the stock footer shows, so
@@ -208,8 +208,8 @@ function measuredSnapshot(): SpeedSnapshot {
 	// stale mid-stream snapshot. Only the pure window TG (tgMode "window" with
 	// alignModes off) decays as events age out; keep its last measured value
 	// in that one case so the segment does not drop to zero on the bar.
-	const tg = engine.tgDisplayed(settings.tgWindowMs, settings.tgMode, settings.statsMode, settings.alignModes);
-	const pair = engine.statsPair(settings.tokenSource, settings.statsMode);
+	const tg = engine.tgDisplayed(settings.tgWindowMs, settings.tgMode, settings.alignModes);
+	const pair = engine.statsPair(settings.tokenSource);
 	const snap: SpeedSnapshot = {
 		tg,
 		pp: engine.ppSpeed(),
@@ -286,9 +286,14 @@ function engineSnapshot(): SpeedSnapshot {
 	const frozeThisActivity = !!fin && fin.tg > 0 && !measured.streaming && view.busySince <= fin.resolvedMs;
 	if (view.busy && hasLiveRates && !frozeThisActivity) {
 		const ours = measured.streaming; // pi's own message is the one in flight
+		// A rate that is not happening this second shows the engine's own
+		// start-to-end average of the last request (dim), never a trailing window
+		// average: the seconds after a prefill ended have nothing to do with that
+		// prefill, so averaging across them would print a wrong number.
+		const finished = fin && fin.tg > 0 ? fin : null;
 		return keepRates({
-			tg: view.liveTg,
-			pp: view.livePp > 0 ? view.livePp : (ours ? measured.pp : 0),
+			tg: view.liveTg > 0 ? view.liveTg : (finished ? finished.tg : 0),
+			pp: view.livePp > 0 ? view.livePp : (finished && finished.pp > 0 ? finished.pp : ours ? measured.pp : 0),
 			// The token/time pair and TTFT describe pi's message. When the engine is
 			// busy with something of its own, showing last message's pair next to
 			// these rates would be a lie, so only the rates go on the bar.

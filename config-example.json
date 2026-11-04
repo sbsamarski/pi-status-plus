@@ -12,10 +12,13 @@
 	"modelDisplay": "filename",
 	"tokenSource": "provider",
 	"tgMode": "window",
-	"statsMode": "gen",
 	"alignModes": "match",
 	"countToolCalls": true,
 	"pauseDuringTools": true,
 	"tgWindowMs": 1000,
-	"refreshMs": 500
+	"refreshMs": 500,
+	"speedSource": "engine",
+	"engineUrl": "http://127.0.0.1:9931",
+	"enginePollMs": 250,
+	"showSpeedSource": false
 }

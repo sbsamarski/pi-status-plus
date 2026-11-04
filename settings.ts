@@ -24,9 +24,9 @@ import { join } from "node:path";
 export type LayoutMode = "one-line" | "two-line-a" | "two-line-b" | "status-line" | "stock";
 /** How the TG speed number is computed. */
 export type TgMode = "window" | "final";
-/** How the "N tok in S s" pair is computed. */
-export type StatsMode = "wall" | "gen";
-/** If tgMode and statsMode disagree, display the TG speed that matches the stats pair. */
+/** "match": the speed and the "N tok in S s" pair always describe the same span
+ *  (window average live, whole-generation average once finished). "off": show
+ *  whatever tgMode names, even when that disagrees with the pair. */
 export type AlignMode = "off" | "match";
 /** Model id display: filename only or the full stock id. */
 export type ModelDisplay = "filename" | "full";
@@ -61,9 +61,8 @@ export interface StatusPlusSettings {
 	tokenSource: TokenSource;
 	/** TG speed: "window" (last N ms, like the server console) or "final" (whole generation). */
 	tgMode: TgMode;
-	/** Stats pair: "wall" (request to end, includes the prefill wait) or "gen" (first token to end, generation only - matches llama-server's eval rate and pi-stamp-lite). */
-	statsMode: StatsMode;
-	/** When tgMode and statsMode disagree, show the TG speed that matches the pair. */
+	/** Keep the speed and the token/time pair on the same time base ("match"), or
+	 *  show whatever tgMode names ("off"). */
 	alignModes: AlignMode;
 	/** Tool-call tokens count towards TG (edit/write). */
 	countToolCalls: boolean;
@@ -97,7 +96,6 @@ export const DEFAULTS: StatusPlusSettings = {
 	modelDisplay: "filename",
 	tokenSource: "provider",
 	tgMode: "window",
-	statsMode: "gen",
 	alignModes: "match",
 	countToolCalls: true,
 	pauseDuringTools: true,
@@ -116,7 +114,7 @@ const LAYOUTS = ["one-line", "two-line-a", "two-line-b", "status-line", "stock"]
 const MODEL_DISPLAYS = ["filename", "full"] as const;
 const TOKEN_SOURCES = ["provider", "estimate"] as const;
 const TG_MODES = ["window", "final"] as const;
-const STATS_MODES = ["wall", "gen"] as const;
+
 const ALIGN_MODES = ["off", "match"] as const;
 const SPEED_SOURCES = ["engine", "measured"] as const;
 const BOOL_KEYS = [
@@ -141,12 +139,11 @@ export const ENUM_CHOICES: Record<string, readonly string[]> = {
 	modelDisplay: MODEL_DISPLAYS,
 	tokenSource: TOKEN_SOURCES,
 	tgMode: TG_MODES,
-	statsMode: STATS_MODES,
 	alignModes: ALIGN_MODES,
 	speedSource: SPEED_SOURCES,
 };
 
-export const ENUM_FIELDS = ["layout", "modelDisplay", "tokenSource", "tgMode", "statsMode", "alignModes", "speedSource"] as const;
+export const ENUM_FIELDS = ["layout", "modelDisplay", "tokenSource", "tgMode", "alignModes", "speedSource"] as const;
 
 export type EnumField = (typeof ENUM_FIELDS)[number];
 
@@ -189,7 +186,6 @@ export function loadSettings(agentDir: string): StatusPlusSettings {
 		if (isString(raw.modelDisplay, MODEL_DISPLAYS)) settings.modelDisplay = raw.modelDisplay;
 		if (isString(raw.tokenSource, TOKEN_SOURCES)) settings.tokenSource = raw.tokenSource;
 		if (isString(raw.tgMode, TG_MODES)) settings.tgMode = raw.tgMode;
-		if (isString(raw.statsMode, STATS_MODES)) settings.statsMode = raw.statsMode;
 		if (isString(raw.alignModes, ALIGN_MODES)) settings.alignModes = raw.alignModes;
 		if (isString(raw.speedSource, SPEED_SOURCES)) settings.speedSource = raw.speedSource;
 		if (raw.engineUrl !== undefined) settings.engineUrl = cleanUrl(raw.engineUrl);

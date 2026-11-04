@@ -7,28 +7,27 @@
  *   firstAt — first generation event (text/thinking/toolcall start or delta)
  *   endAt   — message_end time
  *
- * Three TG quantities (per assistant message, tokens = usage.output):
- *   window — tokens in the last tgWindowMs / window seconds. Instantaneous,
- *            close to what llama-server prints live while generating.
- *   gen    — output / (endAt - firstAt): generation-only speed, the same math
- *            llama-server uses for its final "eval rate" printout.
- *   wall   — output / (t0 → endAt): the old pi-token-speed "average" TPS.
- *            Lower than gen because the prefill wait (TTFT) is included.
+ * Two TG quantities (per assistant message, tokens = usage.output):
+ *   window — tokens in the last tgWindowMs seconds: the average of the recent
+ *            stretch, what the bar shows live while the engine generates.
+ *   gen    — output / (endAt - firstAt): the average over the whole generation,
+ *            the same math llama-server uses for its final "eval rate" printout.
+ *
+ * The time base is generation, always. Dividing output tokens by the whole
+ * request (the prefill wait included) used to be offered as a "wall" mode; it is
+ * gone, because it reported a speed for a period in which the engine wrote no
+ * tokens, and the figure moved with prompt size instead of with writing speed.
  *
  * PP speed: usage.input / (firstAt - t0) — new (non-cached) prompt tokens
- * over the prefill wait. Same math as pi-stamp-lite. A fully cached prefix
- * makes this look very fast because cached tokens are never re-read.
+ * over the prefill wait. A fully cached prefix makes this look very fast because
+ * cached tokens are never re-read.
  *
- * The "N tok in S s" pair:
- *   gen  — output tokens over (endAt - firstAt): generation-only, so its math
- *          equals the gen speed exactly.
- *   wall — output tokens over (t0 → endAt): its math equals the wall speed
- *          exactly (this is the pair the old tps extension showed with
- *          endTpsBehavior "average").
+ * The "N tok in S s" pair uses the same generation time, so its implied rate
+ * equals the gen speed exactly.
  *
- * alignModes "match" displays the TG speed whose math equals the chosen
- * statsMode pair (gen pair ↔ gen speed, wall pair ↔ wall speed), so the two
- * numbers on screen always agree. "off" displays the configured tgMode.
+ * alignModes "match" keeps the two consistent: the window speed live, the gen
+ * average once the response is finished, always matching the pair. "off" shows
+ * whatever tgMode names.
  */
 
 /** One windowed token event. */
@@ -249,46 +248,31 @@ export class SpeedEngine {
 		return (this.finalTokens / genMs) * 1000;
 	}
 
-	/** Wall TG: output / (request → end), the old tps "average". 0 when unknown. */
-	tgWall(): number {
-		if (this.finalTokens <= 0 || this.t0 === 0) return 0;
-		const wallMs = this.elapsedBetween(this.t0, Math.max(this.currentTime(), this.t0));
-		if (wallMs <= 0) return 0;
-		return (this.finalTokens / wallMs) * 1000;
-	}
-
 	/**
-	 * The TG speed to display. alignModes "match" keeps the displayed speed
-	 * consistent with the "N tok in S s" pair (gen pair ↔ gen speed, wall pair
-	 * ↔ wall speed); "off" always shows the configured tgMode. While a stream
-	 * is still running the authoritative usage may not be known yet, so match
-	 * falls back to the window speed live and switches to the matching final
-	 * math once usage arrives.
+	 * The TG speed to display. alignModes "match" keeps the speed and the pair on
+	 * the same time base: the window average live, the whole-generation average
+	 * once the response is finished. "off" shows whatever tgMode names. While a
+	 * stream is running the authoritative usage may not have arrived yet, so match
+	 * uses the window until it has.
 	 */
-	tgDisplayed(windowMs: number, tgMode: "window" | "final", statsMode: "wall" | "gen", align: "off" | "match"): number {
+	tgDisplayed(windowMs: number, tgMode: "window" | "final", align: "off" | "match"): number {
 		if (align === "match") {
 			if (this.finalTokens <= 0) return this.tgWindow(windowMs);
-			return statsMode === "gen" ? this.tgGen() : this.tgWall();
+			return this.tgGen();
 		}
 		return tgMode === "final" ? this.tgGen() : this.tgWindow(windowMs);
 	}
 
 	/**
-	 * The "N tok in S s" pair: tokens and elapsed seconds for the statsMode.
-	 *   gen  — output tokens over generation time (matches tgGen)
-	 *   wall — output tokens over the whole stream (matches tgWall)
+	 * The "N tok in S s" pair: output tokens over generation time, the same span
+	 * tgGen divides by, so the pair's implied rate and the speed agree.
 	 */
-	statsPair(tokenSource: "provider" | "estimate", statsMode: "wall" | "gen"): { tokens: number; seconds: number } {
+	statsPair(tokenSource: "provider" | "estimate"): { tokens: number; seconds: number } {
 		const tokens = this.pairTokens(tokenSource);
 		if (tokens <= 0) return { tokens: 0, seconds: 0 };
-		if (statsMode === "gen") {
-			if (this.firstAt === 0) return { tokens: 0, seconds: 0 };
-			const genMs = this.elapsedBetween(this.firstAt, Math.max(this.currentTime(), this.firstAt));
-			return { tokens, seconds: genMs / 1000 };
-		}
-		if (this.t0 === 0) return { tokens: 0, seconds: 0 };
-		const wallMs = this.elapsedBetween(this.t0, Math.max(this.currentTime(), this.t0));
-		return { tokens, seconds: wallMs / 1000 };
+		if (this.firstAt === 0) return { tokens: 0, seconds: 0 };
+		const genMs = this.elapsedBetween(this.firstAt, Math.max(this.currentTime(), this.firstAt));
+		return { tokens, seconds: genMs / 1000 };
 	}
 
 	/**

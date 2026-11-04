@@ -91,7 +91,6 @@ export interface StatusPlusSettingsView {
 	showSpeedLabels: boolean;
 	modelDisplay: "filename" | "full";
 	tgMode: "window" | "final";
-	statsMode: "wall" | "gen";
 	alignModes: "off" | "match";
 	tokenSource: "provider" | "estimate";
 	/** Name the speed source (engine name, or "measured") in the speed segment. */
