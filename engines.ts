@@ -79,6 +79,9 @@ export interface EngineView {
 	reachable: boolean;
 	/** Engine is reading a prompt or generating right now. */
 	busy: boolean;
+	/** When that activity began in wall-clock ms (0 = idle). Lets the caller tell
+	 *  "the engine is busy with something new" from "still finishing what we timed". */
+	busySince: number;
 	/** Live decode speed, averaged over the window passed to view() (0 = none). */
 	liveTg: number;
 	/** Live prefill speed, averaged over the window passed to view(). */
@@ -222,6 +225,7 @@ export class EngineProbe {
 			url: this.base,
 			reachable: this.reachable,
 			busy: this.busyMs > 0,
+			busySince: this.busyMs,
 			liveTg: smooth ? this.smooth("tg", windowMs) : this.liveTg,
 			livePp: smooth ? this.smooth("pp", windowMs) : this.livePp,
 			liveTgRaw: this.liveTg,
@@ -269,6 +273,12 @@ export class EngineProbe {
 		const now = Date.now();
 		const inWindow = this.samples.filter((s) => s.t >= now - windowMs);
 		if (inWindow.length < 2) return raw;
+		// The newest reading decides whether this rate exists at all. While the
+		// engine reads a prompt it has no decode rate to report, and averaging the
+		// last seconds of the previous decode into that moment would put a number on
+		// the bar that describes nothing that is happening now.
+		const latest = inWindow[inWindow.length - 1]!;
+		if ((kind === "tg" ? latest.tg : latest.pp) === 0) return 0;
 		const first = inWindow[0]!;
 		const last = inWindow[inWindow.length - 1]!;
 		const span = last.t - first.t;
@@ -449,7 +459,12 @@ export class EngineProbe {
 		const busy = state !== "" && state !== "idle" && state !== "waiting" && state !== "sleeping";
 		if (busy && this.busyMs === 0) this.busyMs = Date.now();
 		if (!busy && this.busyMs > 0) this.busyMs = 0;
-		this.liveTg = num(live.tok_s) ?? this.slotLiveTg(data) ?? (busy ? this.liveTg : 0);
+		// Reading a prompt: there is no decode rate yet, and the engine says so by
+		// leaving tok_s empty. Do not carry the previous request's rate into that.
+		const prefilling = /read|prefill|prompt|queue|load/.test(state);
+		this.liveTg = prefilling ? 0 : (num(live.tok_s) ?? this.slotLiveTg(data) ?? (busy ? this.liveTg : 0));
+		// The engine's prefill mean outlives the prefill itself (it describes the
+		// prompt that was just read), so PP stays on the bar during decode too.
 		this.livePp = num(live.prefill_tok_s_mean) ?? num(live.prefill_tok_s) ?? (busy ? this.livePp : 0);
 		if (busy) this.addSample(this.liveTg, this.livePp, this.requestTokens(data));
 		else this.clearSamples();

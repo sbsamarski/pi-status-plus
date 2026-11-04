@@ -106,7 +106,10 @@ export const DEFAULTS: StatusPlusSettings = {
 	speedSource: "engine",
 	engineUrl: "http://127.0.0.1:9931",
 	enginePollMs: 250,
-	showSpeedSource: true,
+	// Off by default: the bar reads "TG 47.8 t/s" and that is all most people
+	// want. /status-plus engine still names the source and the URL, and
+	// /status-plus showSpeedSource on puts the word back on the bar.
+	showSpeedSource: false,
 };
 
 const LAYOUTS = ["one-line", "two-line-a", "two-line-b", "status-line", "stock"] as const;

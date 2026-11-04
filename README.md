@@ -38,7 +38,7 @@ One command drives everything: `/status-plus`. Every choice is saved and remembe
 The default layout, **two-line-a**:
 
 ```
-↑1.2M, ↓192k, R43.0M, CH98.5%, 213.0k/1.0M, 20.3%, auto • ⚡ basalt • TG 32.4 t/s • PP 85.7 t/s • 120 tok in 4 s • TTFT 3.50 s • Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf • xhigh
+↑1.2M, ↓192k, R43.0M, CH98.5%, 213.0k/1.0M, 20.3%, auto • ⚡ TG 32.4 t/s • PP 85.7 t/s • 120 tok in 4 s • TTFT 3.50 s • Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf • xhigh
 D:\Projects\demo-agent • 🔌 MCP: 4 servers enabled (5 disabled)
 ```
 
@@ -55,8 +55,8 @@ Line by line, here is what you are looking at.
 
 **Line 1 — the speed segment** (marked by a lightning bolt so your eye finds it instantly):
 
-- `TG 32.4 t/s` — token generation speed
-- `PP 85.7 t/s` — prefill (prompt processing) speed
+- `TG 32.4 t/s` — token generation speed, while the engine writes (and for as long as the engine is the one working: an autocompaction, a session summary, another client on the same server)
+- `PP 85.7 t/s` — prefill (prompt processing) speed, shown while the prompt is being read — the moment there is a PP and no TG yet, only the PP is shown
 - `120 tok in 4 s` — the finished response, summarised
 - `TTFT 3.50 s` — the wait before the first character appeared
 
@@ -114,10 +114,17 @@ request sent (t0) ──► first token ──► end
 The wait before the first token (network, queue, and the prefill — the server reading your prompt) is **TTFT**. The speed of reading the prompt is **PP**. The speed of writing the response is **TG**.
 
 - **Where each number comes from** — with `speedSource engine` (the default) TG, PP, TTFT and the pair
-  are taken from the engine's own report of the request it just served, and the segment starts with the
-  engine's name (`⚡ basalt • …`). When no engine can be read — wrong port, llama-server started without
-  `--metrics`, offline provider — the same slots are filled from pi's own timing and the segment says
-  `⚡ measured • …`. The label is never wrong about which of the two you are looking at.
+  are taken from the engine's own report of the request it just served. When no engine can be read —
+  wrong port, llama-server started without `--metrics`, offline provider — the same slots are filled from
+  pi's own timing. `/status-plus engine` names the source, the URL and the engine, and
+  `/status-plus showSpeedSource on` puts a short marker (`⚡ basalt • …` or `⚡ measured • …`) at the
+  front of the speed segment for people who want it visible on the bar.
+- **When the bar has numbers** — whenever the engine is working, not only while pi streams a reply here.
+  That includes an autocompaction, a session-title or summary request, a session being re-read at
+  startup, a model still loading, and a completely different client using the same server: the bar asks
+  for a redraw itself while the engine reports itself busy, so PP keeps refreshing during a long prefill
+  instead of appearing only in flashes. When the engine is idle the last response's averages stay on the
+  bar and nothing is redrawn.
 - **How smooth the live number is** — `tgWindowMs` is the averaging window, and it applies to both
   sources. An engine's instantaneous rate is jumpy by nature: it is re-measured over a short recent span,
   and a chunk boundary or a rejected speculative draft moves it. So while the engine generates, the bar
@@ -168,7 +175,7 @@ Settings persist in `~/.pi/agent/pi-status-plus.json`; a documented example ship
 | `speedSource` | `engine`, `measured` | Read speeds from the inference engine, or time pi's stream here |
 | `engineUrl` | `http://127.0.0.1:9931` | Where to read engine speeds from (`off` stops trying) |
 | `enginePollMs` | `250` (100–5000) | How often to poll the engine while it is busy |
-| `showSpeedSource` | `on` / `off` | Show the engine name / `measured` at the start of the speed segment |
+| `showSpeedSource` | `on` / `off` (default `off`) | Put the engine name or `measured` at the start of the speed segment; `/status-plus engine` reports it either way |
 | `tgMode` | `window`, `final` | Live TG formula (only matters when `alignModes` is `off`) |
 | `statsMode` | `gen`, `wall` | The "N tok in S s" time base |
 | `alignModes` | `match`, `off` | Force the displayed TG to agree with the displayed pair |
@@ -244,7 +251,16 @@ Until then the type check reports the pi imports as unresolved — expected, and
 ## FAQ
 
 - **The speed segment is empty — is it broken?**
-  No. Nothing has been measured yet. TG appears the moment text starts flowing; PP and the pair appear when the response completes. Afterwards the last values stay on the bar permanently.
+  Usually it means nothing has been measured yet. PP appears while the prompt is being read (which is the
+  whole first moments of a long session at startup), TG appears while the engine writes, and the pair and
+  TTFT describe the response. Afterwards the last values stay on the bar. If the bar stays empty the
+  whole time, run `/status-plus engine`: it prints the URL it reads, whether that engine answered, and
+  what it calls itself — a wrong port is the usual answer, and `showPp` must be on to see PP at all.
+
+- **PP only appeared for a moment, and nothing appeared during compaction or at startup.**
+  Fixed: those are exactly the cases where the engine works while pi streams nothing here. The bar now
+  follows the engine's own activity — including compaction, session summaries and other clients on the
+  same server — and asks the terminal for a redraw while the engine is busy.
 
 - **The live TG jumps around even though I set a long `tgWindowMs`.**
   Two things to check. `tgWindowMs` below about four poll intervals has nothing to average — the default

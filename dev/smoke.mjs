@@ -10,6 +10,7 @@
  * with rewritten import paths, tested, then the copies are deleted).
  */
 
+import http from "node:http";
 import { pathToFileURL } from "node:url";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -203,6 +204,64 @@ await fire("message_end", { message: { role: "assistant", usage: { input: 10, ou
 await fire("turn_end", {}, ctx);
 const r4 = footerActive(120).join("|");
 console.log("frozen values right after end:", clean(r4).includes("5 tok in") ? "PASS" : `FAIL: ${clean(r4)}`);
+
+// ---------------------------------------------------------------------------
+// The engine is working while pi is idle: compaction, session summary, another
+// client. No message_start was fired here, so nothing in the extension's own
+// timing is running - the engine reader is the only thing that can show numbers.
+// ---------------------------------------------------------------------------
+console.log("\n=== engine busy while pi is idle ===");
+const engineState = { state: "generating", tok_s: 44, prefill: 0, generated: 900 };
+const fakeEngine = http.createServer((req, res) => {
+	if (req.url === "/health") {
+		res.writeHead(200, { "Content-Type": "application/json" });
+		res.end(JSON.stringify({ status: "ok", service: "basalt" }));
+		return;
+	}
+	if (req.url === "/metrics") {
+		engineState.generated += 5; // steady decode, so the average can be checked
+		res.writeHead(200, { "Content-Type": "application/json" });
+		res.end(
+			JSON.stringify({
+				engine: "basalt",
+				live: {
+					state: engineState.state,
+					tok_s: engineState.tok_s,
+					prefill_tok_s_mean: engineState.prefill,
+					prompt_tokens: 1200,
+					generated: engineState.generated,
+					elapsed_s: 20,
+				},
+				requests: [],
+			}),
+		);
+		return;
+	}
+	res.writeHead(404);
+	res.end();
+});
+await new Promise((resolve) => fakeEngine.listen(0, "127.0.0.1", resolve));
+commands.get("status-plus").handler(`engineUrl http://127.0.0.1:${fakeEngine.address().port}`, ctx);
+commands.get("status-plus").handler("enginePollMs 100", ctx);
+commands.get("status-plus").handler("showPp on", ctx);
+await new Promise((resolve) => setTimeout(resolve, 1200));
+const duringDecode = clean(footerActive(160).join(" | "));
+console.log("  decoding, pi idle:", duringDecode);
+console.log("  TG shown with no pi request:", /TG \d/.test(duringDecode) ? "PASS" : "FAIL");
+
+engineState.state = "reading"; // prompt being read: a PP exists, a TG does not yet
+engineState.tok_s = null;
+engineState.prefill = 412;
+await new Promise((resolve) => setTimeout(resolve, 900));
+const duringPrefill = clean(footerActive(160).join(" | "));
+console.log("  prefilling, pi idle:", duringPrefill);
+console.log(
+	"  PP shown, stale TG dropped:",
+	/PP \d/.test(duringPrefill) && !/TG \d/.test(duringPrefill) ? "PASS" : "FAIL",
+);
+
+fakeEngine.close();
+commands.get("status-plus").handler("engineUrl off", ctx);
 
 console.log("\n=== settings summary ===");
 commands.get("status-plus").handler("status", ctx);

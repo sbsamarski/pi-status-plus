@@ -153,17 +153,26 @@ console.log('context format OK:', parts.context === '106.4k/260.0k, 40.9%'
 console.log('stats line:', mod.statsPartsPlain(parts));
 console.log('auto kept as its own item:', mod.statsPartsPlain(parts).endsWith(', auto'));
 
-const speedData = (source, engineName) => ({
-  speed: { tg: 51.3, pp: 103.4, ttft: 0.91, statsTokens: 112, statsSeconds: 2.09, streaming: false, source, engineName },
-  settings: view({}),
+const speedData = (over, settingsOver) => ({
+  speed: { tg: 51.3, pp: 103.4, ttft: 0.91, statsTokens: 112, statsSeconds: 2.09, streaming: false, source: 'engine', engineName: 'basalt', ...over },
+  settings: view(settingsOver ?? {}),
 });
-const fromEngine = mod.buildSpeedSegment(speedData('engine', 'basalt'));
-const fromPi = mod.buildSpeedSegment(speedData('measured', ''));
-console.log('speed (engine):', JSON.stringify(fromEngine));
-console.log('speed (measured):', JSON.stringify(fromPi));
-console.log('speed source marker OK:',
-  fromEngine === '\u26a1 basalt \u2022 TG 51.3 t/s \u2022 PP 103.4 t/s \u2022 112 tok in 2 s \u2022 TTFT 0.91 s'
-  && fromPi.includes('measured \u2022 TG'));
+const withMarker = mod.buildSpeedSegment(speedData({}, { showSpeedSource: true }));
+const plain = mod.buildSpeedSegment(speedData({}));
+const measuredPlain = mod.buildSpeedSegment(speedData({ source: 'measured', engineName: '' }));
+// Prefill: the engine is reading the prompt, so there is a PP and no TG yet.
+const prefill = mod.buildSpeedSegment(speedData({ tg: 0, pp: 382.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: true }));
+console.log('speed (marker on):', JSON.stringify(withMarker));
+console.log('speed (default):', JSON.stringify(plain));
+console.log('speed (prefill):', JSON.stringify(prefill));
+console.log('marker opt-in OK:',
+  withMarker === '\u26a1 basalt \u2022 TG 51.3 t/s \u2022 PP 103.4 t/s \u2022 112 tok in 2 s \u2022 TTFT 0.91 s'
+  && withMarker.includes('measured') === false);
+console.log('no source words by default OK:',
+  plain === '\u26a1 TG 51.3 t/s \u2022 PP 103.4 t/s \u2022 112 tok in 2 s \u2022 TTFT 0.91 s'
+  && !measuredPlain.includes('measured') && !measuredPlain.includes('basalt'));
+console.log('prefill shows PP, never a zero TG OK:',
+  prefill === '\u26a1 PP 382.4 t/s' && !prefill.includes('TG'));
 
 for (const f of ["engine.ts", "engines.ts", "footer.ts", "settings.ts", "types.ts"]) {
 	rmSync(join(here, f), { force: true });

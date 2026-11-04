@@ -112,10 +112,11 @@ export function statsPartsPlain(parts: StatsParts): string {
 }
 
 /**
- * Build the speed segment: "⚡ basalt • TG xx t/s • PP yy t/s • N tok in S s • TTFT zz s".
- * The first item names where the speeds came from - the engine that produced
- * them, or "measured" when the extension timed pi's stream itself - so a number
- * that disagrees with the engine console is never silently a different measure.
+ * Build the speed segment: "⚡ TG xx t/s • PP yy t/s • N tok in S s • TTFT zz s".
+ * TG only appears when there is a decode rate (a prompt still being read has a PP
+ * and no TG yet, and "TG 0.0" there would bury the PP). With showSpeedSource on,
+ * the segment starts with the source - the engine that produced the numbers, or
+ * "measured" when the extension timed pi's stream itself.
  */
 export function buildSpeedSegment(data: FooterFrameData): string {
 	const speed = data.speed;
@@ -125,7 +126,10 @@ export function buildSpeedSegment(data: FooterFrameData): string {
 	if (s.showSpeedSource && (speed.tg > 0 || speed.streaming)) {
 		parts.push(speed.source === "engine" ? speed.engineName || "engine" : "measured");
 	}
-	if (speed.tg > 0 || (speed.streaming && speed.statsTokens > 0)) {
+	// TG only when there is a decode rate: while the engine is still reading the
+	// prompt there is no decode speed yet, and printing "TG 0.0" there would hide
+	// the PP number that is the only real news at that moment.
+	if (speed.tg > 0) {
 		parts.push(`${s.showSpeedLabels ? "TG " : ""}${speedText(speed.tg)} t/s`);
 	}
 	if (s.showPp && speed.pp > 0) {

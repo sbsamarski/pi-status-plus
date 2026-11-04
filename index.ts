@@ -7,7 +7,7 @@
  * (ctx.ui.setFooter), so every line is under our control.
  *
  * Layouts (/status-plus layout <name>):
- *   one-line    — "↑…, ↓…, R…, CH…%, 106.4k/260.0k, 40.9%, auto • ⚡ basalt • TG xx t/s • PP yy t/s • TTFT zz s • model.gguf • xhigh • folder"
+ *   one-line    — "↑…, ↓…, R…, CH…%, 106.4k/260.0k, 40.9%, auto • ⚡ TG xx t/s • PP yy t/s • TTFT zz s • model.gguf • xhigh • folder"
  *                 (single line, right-aligned tail, no MCP info)
  *   two-line-a  — line 1: one-line content minus folder (folder+MCP on line 2)
  *                 line 2: "folder • 🔌 MCP: N servers enabled (M disabled)"
@@ -237,9 +237,13 @@ function measuredSnapshot(): SpeedSnapshot {
  * accepted draft tokens that never arrive as separate chunks - which is why the
  * old always-measured number kept disagreeing with the server.
  *
- * Order of preference: the finished request as the engine timed it, then the
- * engine's live rate while it generates, then our own measurement. The bar says
- * which one it is showing ("⚡ basalt • …" vs "⚡ measured • …").
+ * Order of preference:
+ *   1. the engine's live rates, whenever it reports itself busy - with ours or
+ *      with anything else's request (compaction, summary, another client)
+ *   2. the finished request, in the engine's own seconds
+ *   3. our own measurement of pi's stream, when the engine cannot be read
+ * /status-plus engine says which one is in use; showSpeedSource puts the word on
+ * the bar for those who want it there.
  */
 function engineSnapshot(): SpeedSnapshot {
 	const measured = measuredSnapshot();
@@ -248,8 +252,36 @@ function engineSnapshot(): SpeedSnapshot {
 	// rate is not an average, and the setting promises an average.
 	const view = probe.view(settings.tgWindowMs);
 
-	// 1. the request that just finished, in the engine's own seconds
+	// 1. whatever the engine is doing right now - our message, an autocompaction,
+	// a session summary, or a completely different client on the same port. Its
+	// live rates are the truth of this moment, so they beat anything measured or
+	// frozen earlier, and they are shown even when no request of ours is in
+	// flight - which is what "nothing shows during compaction" used to mean.
+	// A prompt still being read has a PP and no TG yet; the bar shows the PP.
+	const hasLiveRates = view.liveTg > 0 || view.livePp > 0;
+	// ... unless this activity is the very request we already timed and froze: for
+	// a poll or two after a response ends the engine still calls itself busy, and
+	// then the finished response's own average is the better number to show.
 	const fin = view.final;
+	const frozeThisActivity = !!fin && fin.tg > 0 && !measured.streaming && view.busySince <= fin.resolvedMs;
+	if (view.busy && hasLiveRates && !frozeThisActivity) {
+		const ours = measured.streaming; // pi's own message is the one in flight
+		return {
+			tg: view.liveTg,
+			pp: view.livePp > 0 ? view.livePp : (ours ? measured.pp : 0),
+			// The token/time pair and TTFT describe pi's message. When the engine is
+			// busy with something of its own, showing last message's pair next to
+			// these rates would be a lie, so only the rates go on the bar.
+			ttft: ours ? measured.ttft : 0,
+			statsTokens: ours ? measured.statsTokens : 0,
+			statsSeconds: ours ? measured.statsSeconds : 0,
+			streaming: ours,
+			source: "engine",
+			engineName: view.name,
+		};
+	}
+
+	// 2. the request that just finished, in the engine's own seconds
 	if (fin && fin.tg > 0 && !measured.streaming) {
 		return {
 			tg: fin.tg,
@@ -258,17 +290,6 @@ function engineSnapshot(): SpeedSnapshot {
 			statsTokens: fin.out > 0 ? fin.out : measured.statsTokens,
 			statsSeconds: fin.genSeconds > 0 ? fin.genSeconds : measured.statsSeconds,
 			streaming: false,
-			source: "engine",
-			engineName: view.name,
-		};
-	}
-
-	// 2. live decode speed as the engine reports it right now
-	if (view.busy && view.liveTg > 0) {
-		return {
-			...measured,
-			tg: view.liveTg,
-			pp: view.livePp > 0 ? view.livePp : measured.pp,
 			source: "engine",
 			engineName: view.name,
 		};
@@ -440,6 +461,7 @@ function installFooter(ctx: ExtensionContext): void {
 	try {
 		ctx.ui.setFooter((tui: TUI, theme: FooterFrameData["theme"], footerData: ReadonlyFooterDataProvider) => {
 			footerDataRef = footerData;
+			tuiRef = tui; // so the engine-activity ticker can ask for a frame
 			const unsub = footerData.onBranchChange(() => tui.requestRender());
 			const component: Component & { dispose?(): void } = {
 				render(width: number): string[] {
@@ -454,6 +476,7 @@ function installFooter(ctx: ExtensionContext): void {
 			component.dispose = () => {
 				unsub();
 				footerDataRef = undefined;
+				tuiRef = undefined;
 			};
 			return component;
 		});
@@ -514,6 +537,44 @@ function updateStatusLine(ctx: ExtensionContext, force = false): void {
 }
 
 // ---------------------------------------------------------------------------
+// Repaint while the engine works
+// ---------------------------------------------------------------------------
+
+/** The TUI our footer is installed in, so we can ask it for a frame. */
+let tuiRef: TUI | undefined;
+let ticker: ReturnType<typeof setInterval> | undefined;
+
+/**
+ * Ask for a frame whenever the engine is busy, even when pi itself is idle.
+ *
+ * pi redraws the footer on its own loop while a response streams here. But the
+ * engine is also busy at moments when nothing streams here: a model still
+ * loading, a session being read at startup, an autocompaction, a session-title
+ * request, another client on the same port. Left to pi's loop, the numbers would
+ * only move when something else happened to redraw - which is why PP appeared
+ * only in flashes and nothing appeared during a compaction. While the engine
+ * reports itself busy we ask for a frame once per refreshMs; while it is idle we
+ * ask for none, so an idle pi burns nothing.
+ */
+function startTicker(): void {
+	stopTicker();
+	const every = Math.max(200, settings.refreshMs);
+	ticker = setInterval(() => {
+		const ctx = activeCtx;
+		if (!ctx || !probe.view(0).busy) return;
+		if (footerInstalled) tuiRef?.requestRender();
+		else paint(ctx);
+	}, every);
+	// A timer must never be the reason a process stays alive.
+	(ticker as unknown as { unref?: () => void }).unref?.();
+}
+
+function stopTicker(): void {
+	if (ticker !== undefined) clearInterval(ticker);
+	ticker = undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Event wiring
 // ---------------------------------------------------------------------------
 
@@ -527,11 +588,13 @@ export default function (pi: ExtensionAPI): void {
 		// probe backs off and the bar quietly falls back to measured numbers).
 		probe.configure(settings.engineUrl, settings.enginePollMs);
 		probe.start();
+		startTicker();
 		applyLayout(ctx);
 		updateStatusLine(ctx, true);
 	});
 
 	pi.on("session_shutdown", () => {
+		stopTicker();
 		probe.stop();
 		try {
 			if (footerInstalled) activeCtx?.ui.setFooter(undefined);
@@ -761,8 +824,9 @@ function setEnum(key: EnumField, value: string): void {
 }
 
 function commit(ctx: ExtensionCommandContext, message: string): void {
-	// Settings may have moved the engine endpoint: re-point the reader at once.
+	// Settings may have moved the engine endpoint or the refresh cadence.
 	probe.configure(settings.engineUrl, settings.enginePollMs);
+	startTicker();
 	try {
 		saveSettings(getAgentDir(), settings);
 		ctx.ui.notify(`${message} · saved`, "info");
