@@ -86,6 +86,16 @@ export interface EngineView {
 	 *  is not). Engines keep reporting their prefill mean during decode, so the
 	 *  caller cannot tell this from the numbers alone. */
 	prefilling: boolean;
+	/** The engine's own words for what it is doing ("idle", "reading", ...). */
+	state: string;
+	/** When the engine was last seen busy (wall-clock ms; 0 = never). */
+	lastBusyMs: number;
+	/** Is the reader actually polling right now? */
+	watching: boolean;
+	/** Prompt tokens read so far in the current prefill (0 = not reported). */
+	prefillDone: number;
+	/** Total prompt tokens of the current prefill (0 = not reported). */
+	prefillTotal: number;
 	/** Live decode speed, averaged over the window passed to view() (0 = none). */
 	liveTg: number;
 	/** Live prefill speed, averaged over the window passed to view(). */
@@ -147,6 +157,10 @@ export class EngineProbe {
 	private lastBusyAt = 0;
 	private idleSince = 0;
 	private lastAdoptedId = "";
+	private prefillDone = 0;
+	private prefillTotal = 0;
+	/** Whether this poll's /metrics already contributed a live sample. */
+	private sampledThisPoll = false;
 	private lastFinal: EngineRequestNumbers | null = null;
 	private samples: LiveSample[] = [];
 	private lastTokens: number | null = null;
@@ -202,6 +216,13 @@ export class EngineProbe {
 		this.reqCounters = null;
 		this.samples = [];
 		this.lastTokens = null;
+		this.prefillDone = 0;
+		this.prefillTotal = 0;
+	}
+
+	/** Is the reader polling? Lets the caller re-arm it without disturbing it. */
+	watching(): boolean {
+		return !this.stopped && this.base !== "";
 	}
 
 	/** pi sent a request: remember when, and the counters as they stood then. */
@@ -215,6 +236,8 @@ export class EngineProbe {
 		this.lastFinal = null; // keep showing the previous answer only until now
 		this.samples = []; // a new request must not be averaged with the previous one
 		this.lastTokens = null;
+		this.prefillDone = 0; // this request's prompt size is not known yet
+		this.prefillTotal = 0;
 		if (!this.stopped) this.schedule(0); // poll soon: the start counters matter
 	}
 
@@ -248,6 +271,9 @@ export class EngineProbe {
 			busy: this.busyMs > 0,
 			busySince: this.busyMs,
 			prefilling: this.prefillingNow,
+			state: this.liveState || (this.prefillingNow ? "prefill" : ""),
+			lastBusyMs: this.lastBusyAt,
+			watching: !this.stopped && this.base !== "",
 			liveTg: smooth ? this.smooth("tg", windowMs) : this.liveTg,
 			// An engine that publishes a prefill mean (basalt, strata) is already
 			// giving the exact average from the start of this prompt to this moment,
@@ -257,6 +283,8 @@ export class EngineProbe {
 			livePp: smooth && this.kind !== "json" ? this.smooth("pp", windowMs) : this.livePp,
 			liveTgRaw: this.liveTg,
 			livePpRaw: this.livePp,
+			prefillDone: this.prefillDone,
+			prefillTotal: this.prefillTotal,
 			final: this.lastFinal,
 			kind: this.kind,
 			note: this.note,
@@ -410,6 +438,7 @@ export class EngineProbe {
 		if (this.stopped) return;
 		try {
 			if (!this.name || Date.now() - this.nameCheckedAt > 300000) await this.identify();
+			this.sampledThisPoll = false; // one live sample per poll, whoever reports it
 			const body = await this.fetchText("/metrics");
 			if (body === undefined) {
 				// No /metrics (llama.cpp without --metrics): say why we cannot help.
@@ -422,6 +451,9 @@ export class EngineProbe {
 				if (trimmed.startsWith("{") || trimmed.startsWith("[")) this.readJson(trimmed);
 				else this.readPrometheus(body);
 			}
+			// Slot state is worth reading even with no /metrics: it is how a busy
+			// engine is noticed at all when the engine publishes no counters.
+			await this.readSlots();
 		} catch (error: unknown) {
 			this.reachable = false;
 			this.kind = "none";
@@ -528,8 +560,10 @@ export class EngineProbe {
 		// The engine's prefill mean outlives the prefill itself (it describes the
 		// prompt that was just read), so PP stays on the bar during decode too.
 		this.livePp = num(live.prefill_tok_s_mean) ?? num(live.prefill_tok_s) ?? (active ? this.livePp : 0);
-		if (busy) this.addSample(this.liveTg, this.livePp, this.requestTokens(data));
-		else this.noteIdle();
+		if (busy) {
+			this.addSample(this.liveTg, this.livePp, this.requestTokens(data));
+			this.sampledThisPoll = true;
+		} else this.noteIdle();
 
 		// the request that just finished, if the engine has written its entry
 		this.adoptFinishedActivity(data);
@@ -568,6 +602,63 @@ export class EngineProbe {
 	}
 
 	/** /slots carries the same live numbers on engines without a live block. */
+	/**
+	 * /slots: the prefill's own progress, and a second opinion on "busy".
+	 *
+	 * basalt and strata count the prompt as they read it (prefill_done of
+	 * prompt_tokens), which is the two numbers the bar shows beside PP - /metrics
+	 * does not carry them. The slot's is_processing flag matters just as much:
+	 * the live block of /metrics is one field's opinion, and a request from
+	 * another client (a compaction summary goes direct, not through pi) must not
+	 * become invisible because that one field stayed quiet for a moment.
+	 */
+	private async readSlots(): Promise<void> {
+		const body = await this.fetchText("/slots");
+		if (body === undefined) return;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(body);
+		} catch {
+			return;
+		}
+		if (!Array.isArray(parsed)) return;
+		let done = 0;
+		let total = 0;
+		let working = false;
+		let slotState = "";
+		for (const entry of parsed) {
+			const slot = entry as Record<string, unknown>;
+			const promptTokens = num(slot.prompt_tokens) ?? 0;
+			if (promptTokens > total) {
+				total = promptTokens;
+				done = num(slot.prefill_done) ?? 0;
+			}
+			if (slot.is_processing === true) working = true;
+			if (typeof slot.state === "string" && slot.state.toLowerCase() !== "idle") working = true;
+			if (typeof slot.state === "string") slotState = slot.state.toLowerCase();
+		}
+		if (total > 0) {
+			this.prefillTotal = total;
+			this.prefillDone = Math.max(0, Math.min(done, total));
+		} else if (!working) {
+			this.prefillDone = 0;
+			this.prefillTotal = 0;
+		}
+		if (!working) return;
+		this.idleSince = 0;
+		this.lastBusyAt = Date.now();
+		if (this.busyMs === 0) this.busyMs = this.lastBusyAt;
+		// A slot named "prefill"/"reading" is reading the prompt even if the live
+		// block called this second something else.
+		if (/^prefill|^read|^prompt/.test(slotState)) {
+			this.prefillingNow = true;
+			this.liveTg = 0;
+		}
+		// Keep one sample per poll: a poll whose /metrics said nothing still gets a
+		// reading, so the averaging window covers this slice of time.
+		if (!this.sampledThisPoll) this.addSample(this.liveTg, this.livePp, this.lastTokens);
+	}
+
 	private slotLiveTg(data: Record<string, unknown>): number | undefined {
 		const slots = data.slots;
 		if (!Array.isArray(slots)) return undefined;
@@ -693,8 +784,10 @@ export class EngineProbe {
 			}
 		}
 		this.prevCounters = counters;
-		if (this.busyMs > 0) this.addSample(this.liveTg, this.livePp, counters.predTokens);
-		else this.noteIdle();
+		if (this.busyMs > 0) {
+			this.addSample(this.liveTg, this.livePp, counters.predTokens);
+			this.sampledThisPoll = true;
+		} else this.noteIdle();
 
 		// attribute the finished request from its own counter window
 		if (this.reqCounters && this.reqEndMs > 0 && this.reqTries < ATTRIBUTION_POLL_LIMIT) {

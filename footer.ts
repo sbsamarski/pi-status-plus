@@ -72,7 +72,7 @@ export function buildStatsParts(data: FooterFrameData): StatsParts {
 	if (stats.output > 0) beforeParts.push(`↓${formatTokens(stats.output)}`);
 	if (stats.cacheRead > 0) beforeParts.push(`R${formatTokensCtx(stats.cacheRead)}`);
 	if (stats.cacheWrite > 0) beforeParts.push(`W${formatTokens(stats.cacheWrite)}`);
-	if ((stats.cacheRead > 0 || stats.cacheWrite > 0) && stats.cacheHitRate !== undefined) {
+	if (s.showCacheHit && (stats.cacheRead > 0 || stats.cacheWrite > 0) && stats.cacheHitRate !== undefined) {
 		beforeParts.push(`CH${stats.cacheHitRate.toFixed(1)}%`);
 	}
 
@@ -130,12 +130,21 @@ export function buildSpeedSegment(data: FooterFrameData): string {
 	// happening, dim (the same colour as the token totals at the start of the
 	// line) when it has stopped and the number is the average it left behind.
 	// A rate that has never been measured shows nothing - no "TG 0.0" placeholders.
-	const rate = (label: string, value: number, live: boolean): string => {
-		const text = `${s.showSpeedLabels ? label : ""}${speedText(value)} t/s`;
-		return live || data.theme === undefined ? text : data.theme.fg("dim", text);
-	};
-	if (speed.tg > 0) parts.push(rate("TG ", speed.tg, speed.tgLive === true));
-	if (s.showPp && speed.pp > 0) parts.push(rate("PP ", speed.pp, speed.ppLive === true));
+	const paint = (text: string, live: boolean): string =>
+		live || data.theme === undefined ? text : data.theme.fg("dim", text);
+	const label = (name: string): string => (s.showSpeedLabels ? name : "");
+	if (speed.tg > 0) parts.push(paint(`${label("TG ")}${speedText(speed.tg)} t/s`, speed.tgLive === true));
+	if (s.showPp && speed.pp > 0) {
+		let text = `${label("PP ")}${speedText(speed.pp)} t/s`;
+		// How far the engine has got through the prompt, in the same shape as the
+		// context figure on the same line: read so far, total, and the percentage.
+		if (s.showPpTokens && speed.prefillTotal > 0) {
+			const done = Math.min(speed.prefillDone, speed.prefillTotal);
+			const pct = (done / speed.prefillTotal) * 100;
+			text += `, ${formatTokensCtx(done)}/${formatTokensCtx(speed.prefillTotal)}, ${pct.toFixed(1)}%`;
+		}
+		parts.push(paint(text, speed.ppLive === true));
+	}
 	if (s.showStats && speed.statsTokens > 0) {
 		const seconds = speed.statsSeconds;
 		const tokens = Math.round(speed.statsTokens);

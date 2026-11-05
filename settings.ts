@@ -43,6 +43,11 @@ export interface StatusPlusSettings {
 	showTtft: boolean;
 	/** Show the prefill (prompt processing) speed. */
 	showPp: boolean;
+	/** Show the CH cache-hit percentage in the stats part. */
+	showCacheHit: boolean;
+	/** Show the prefill's own progress (tokens read of total, and the percentage)
+	 *  beside the PP speed. */
+	showPpTokens: boolean;
 	/** Show the auto-compact indicator (", auto" inside the context parentheses). */
 	showAuto: boolean;
 	/** Show the working folder. */
@@ -87,6 +92,8 @@ export const DEFAULTS: StatusPlusSettings = {
 	showStats: true,
 	showTtft: true,
 	showPp: true,
+	showCacheHit: true,
+	showPpTokens: true,
 	showAuto: true,
 	showCwd: true,
 	showMcp: true,
@@ -121,6 +128,8 @@ const BOOL_KEYS = [
 	"showStats",
 	"showTtft",
 	"showPp",
+	"showCacheHit",
+	"showPpTokens",
 	"showAuto",
 	"showCwd",
 	"showMcp",

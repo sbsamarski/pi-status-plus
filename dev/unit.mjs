@@ -214,6 +214,19 @@ console.log('context format OK:', parts.context === '106.4k/260.0k, 40.9%'
 console.log('stats line:', mod.statsPartsPlain(parts));
 console.log('auto kept as its own item:', mod.statsPartsPlain(parts).endsWith(', auto'));
 
+// CH (cache-hit rate) is optional now.
+const chData = (showCacheHit) => ({
+  stats: { input: 1000, output: 200, cacheRead: 90000, cacheWrite: 0, cost: 0, cacheHitRate: 98.6,
+           contextTokens: 106400, realContextTokens: 106400, contextWindow: 260000, autoCompact: false },
+  settings: view({ showAuto: false, showCacheHit }),
+  theme,
+});
+const chOn = mod.statsPartsPlain(mod.buildStatsParts(chData(true)));
+const chOff = mod.statsPartsPlain(mod.buildStatsParts(chData(false)));
+console.log('CH on :', JSON.stringify(chOn));
+console.log('CH off:', JSON.stringify(chOff));
+console.log('CH optional OK:', chOn.includes('CH98.6%') && !chOff.includes('CH') && chOff.includes('106.4k/260.0k, 40.9%'));
+
 const speedData = (over, settingsOver) => ({
   speed: { tg: 51.3, pp: 103.4, ttft: 0.91, statsTokens: 112, statsSeconds: 2.09, streaming: false, source: 'engine', engineName: 'basalt', ...over },
   settings: view(settingsOver ?? {}),

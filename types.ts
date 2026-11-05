@@ -45,6 +45,10 @@ export interface SpeedSnapshot {
 	tgLive: boolean;
 	/** True while the prefill rate is happening right now. */
 	ppLive: boolean;
+	/** The engine's progress through the current prompt: tokens read of the total
+	 *  prompt (0 = the engine does not report it, so nothing is shown). */
+	prefillDone: number;
+	prefillTotal: number;
 	/** Where tg/pp/ttft came from: the engine itself, or our own measurement. */
 	source: "engine" | "measured";
 	/** Engine the numbers came from ("" when unknown or measured). */
@@ -84,6 +88,10 @@ export interface StatusPlusSettingsView {
 	showStats: boolean;
 	showTtft: boolean;
 	showPp: boolean;
+	/** The CH cache-hit percentage in the stats part. */
+	showCacheHit: boolean;
+	/** How far the prefill has got, as tokens and a percentage, beside PP. */
+	showPpTokens: boolean;
 	showAuto: boolean;
 	showCwd: boolean;
 	showMcp: boolean;

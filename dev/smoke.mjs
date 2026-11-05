@@ -224,6 +224,12 @@ const fakeEngine = http.createServer((req, res) => {
 		res.end(JSON.stringify({ status: "ok", service: "basalt" }));
 		return;
 	}
+	if (req.url === "/slots") {
+		// Prefill progress, which /metrics does not carry: tokens read of prompt total.
+		res.writeHead(200, { "Content-Type": "application/json" });
+		res.end(JSON.stringify([{ id: 0, is_processing: true, state: "decoding", prompt_tokens: 1200, prefill_done: 900, generated: 500, tok_s: 46 }]));
+		return;
+	}
 	if (req.url === "/metrics") {
 		engineState.generated += 5; // steady decode, so the average can be checked
 		res.writeHead(200, { "Content-Type": "application/json" });
@@ -268,6 +274,19 @@ console.log(
 		? "PASS"
 		: "FAIL",
 );
+
+// The prefill's own progress, in the same shape as the context figure on the line.
+console.log(
+	"  PP carries prompt progress:",
+	/PP [\d.]+ t\/s, 900\/1\.2k, 75\.0%/.test(clean(prefillRaw)) ? "PASS" : `FAIL: ${clean(prefillRaw)}`,
+);
+commands.get("status-plus").handler("showPpTokens off", ctx);
+await new Promise((resolve) => setTimeout(resolve, 400));
+console.log(
+	"  prompt progress is optional:",
+	!/900\/1\.2k/.test(clean(footerActive(160).join(" | "))) ? "PASS" : "FAIL",
+);
+commands.get("status-plus").handler("showPpTokens on", ctx);
 
 fakeEngine.close();
 commands.get("status-plus").handler("engineUrl off", ctx);

@@ -221,6 +221,10 @@ function measuredSnapshot(): SpeedSnapshot {
 		// is no decode and the engine is reading the prompt, so PP is the live one.
 		tgLive: engine.isStreaming,
 		ppLive: engine.isStreaming && engine.ttftMs() === 0,
+		// pi is told nothing about how far a prompt has been read; only the engine
+		// can say, so the measured path shows no progress.
+		prefillDone: 0,
+		prefillTotal: 0,
 		source: "measured",
 		engineName: "",
 	};
@@ -306,6 +310,8 @@ function engineSnapshot(): SpeedSnapshot {
 			// cannot say whether the prompt is still being read.
 			tgLive: view.liveTg > 0,
 			ppLive: view.prefilling && view.livePp > 0,
+			prefillDone: view.prefillDone,
+			prefillTotal: view.prefillTotal,
 			source: "engine",
 			engineName: view.name,
 		});
@@ -323,13 +329,20 @@ function engineSnapshot(): SpeedSnapshot {
 			// Both activities are over: the two averages stay on the bar, dim.
 			tgLive: false,
 			ppLive: false,
+			prefillDone: view.prefillDone,
+			prefillTotal: view.prefillTotal,
 			source: "engine",
 			engineName: view.name,
 		});
 	}
 
 	// 3. nothing to read (engine down, no --metrics, wrong port): say so, do not hide it
-	return keepRates({ ...measured, engineName: view.reachable ? view.name : "" });
+	return keepRates({
+		...measured,
+		engineName: view.reachable ? view.name : "",
+		prefillDone: view.prefillDone,
+		prefillTotal: view.prefillTotal,
+	});
 }
 
 /** One-line answer to "what is the engine reader seeing right now?". */
@@ -338,6 +351,19 @@ function engineReadout(): string {
 	const parts: string[] = [];
 	parts.push(`url=${v.url || "(off)"}`);
 	parts.push(v.reachable ? `engine=${v.name} [${v.kind}]` : `engine unreachable (${v.note || "no answer"})`);
+	// Diagnostics first: "the bar is not moving" is usually one of these three, and
+	// during a compaction this line is what tells us which - run it while the
+	// summary is being written and the answer is on screen.
+	parts.push(
+		v.watching
+			? `reading the engine, last busy ${v.lastBusyMs === 0 ? "never" : `${Math.max(0, Math.round((Date.now() - v.lastBusyMs) / 1000))} s ago`}`
+			: "NOT polling the engine (turn speedSource on / check engineUrl)",
+	);
+	if (v.state) parts.push(`engine says: ${v.state}`);
+	if (v.prefillTotal > 0) {
+		const done = Math.min(v.prefillDone, v.prefillTotal);
+		parts.push(`prompt read ${formatTokens(done)}/${formatTokens(v.prefillTotal)}, ${((done / v.prefillTotal) * 100).toFixed(1)}%`);
+	}
 	if (v.busy) {
 		const basis =
 			settings.tgWindowMs >= 250
@@ -593,10 +619,19 @@ function startTicker(): void {
 	stopTicker();
 	const every = Math.max(200, settings.refreshMs);
 	ticker = setInterval(() => {
-		const ctx = activeCtx;
-		if (!ctx || !probe.view(0).busy) return;
+		// Keep the reader alive: whichever event sequence a session replacement or a
+		// reload turns out to use, the watcher has to be running when the engine is
+		// busy, and this is the one timer guaranteed to tick throughout.
+		if (!probe.watching() && settings.speedSource === "engine" && settings.engineUrl !== "") {
+			probe.configure(settings.engineUrl, settings.enginePollMs);
+			probe.start();
+		}
+		if (!probe.view(0).busy) return;
+		// The footer needs the TUI, not a session context: a compaction can leave the
+		// session ctx temporarily unset while the engine works, and the bar must keep
+		// moving through that.
 		if (footerInstalled) tuiRef?.requestRender();
-		else paint(ctx);
+		else if (activeCtx) paint(activeCtx);
 	}, every);
 	// A timer must never be the reason a process stays alive.
 	(ticker as unknown as { unref?: () => void }).unref?.();
@@ -605,6 +640,16 @@ function startTicker(): void {
 function stopTicker(): void {
 	if (ticker !== undefined) clearInterval(ticker);
 	ticker = undefined;
+}
+
+/** Make sure both the reader and the repaint timer are alive (idempotent). */
+function ensureWatching(): void {
+	if (settings.speedSource !== "engine" || settings.engineUrl === "") return;
+	if (!probe.watching()) {
+		probe.configure(settings.engineUrl, settings.enginePollMs);
+		probe.start();
+	}
+	if (ticker === undefined) startTicker();
 }
 
 // ---------------------------------------------------------------------------
@@ -650,6 +695,7 @@ export default function (pi: ExtensionAPI): void {
 			engine.start(start);
 			// Tell the engine reader a request went out: it needs the start time (and
 			// the engine's counters at that moment) to attribute the right request.
+			ensureWatching();
 			probe.beginRequest(start);
 		}
 	});
@@ -696,6 +742,12 @@ export default function (pi: ExtensionAPI): void {
 		engine.stop(Date.now());
 		refreshDisplayCache(ctx);
 		updateStatusLine(ctx, true);
+	});
+
+	pi.on("agent_start", () => {
+		// A turn beginning is a cheap, reliable moment to notice that the reader or
+		// the repaint timer died somewhere in the session churn before this.
+		ensureWatching();
 	});
 
 	pi.on("turn_end", (_event: TurnEndEvent, ctx: ExtensionContext) => {
@@ -841,6 +893,8 @@ const BOOL_KEYS_LIST: readonly BoolKey[] = [
 	"showStats",
 	"showTtft",
 	"showPp",
+	"showCacheHit",
+	"showPpTokens",
 	"showAuto",
 	"showCwd",
 	"showMcp",

@@ -38,7 +38,7 @@ One command drives everything: `/status-plus`. Every choice is saved and remembe
 The default layout, **two-line-a**:
 
 ```
-↑1.2M, ↓192k, R43.0M, CH98.5%, 213.0k/1.0M, 20.3%, auto • ⚡ TG 32.4 t/s • PP 85.7 t/s • 120 tok in 4 s • TTFT 3.50 s • Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf • xhigh
+↑1.2M, ↓192k, R43.0M, CH98.5%, 213.0k/1.0M, 20.3%, auto • ⚡ TG 32.4 t/s • PP 85.7 t/s, 180.0k/213.0k, 84.5% • 120 tok in 4 s • TTFT 3.50 s • Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf • xhigh
 D:\Projects\demo-agent • 🔌 MCP: 4 servers enabled (5 disabled)
 ```
 
@@ -49,7 +49,7 @@ Line by line, here is what you are looking at.
 - `↑1.2M` — prompt tokens sent to the model so far
 - `↓192k` — tokens received back
 - `R43.0M` — prompt tokens served from the provider's prompt cache instead of re-processed (with a warm llama.cpp KV-cache this is huge — by design)
-- `CH98.5%` — cache hit rate of the most recent call
+- `CH98.5%` — cache hit rate of the most recent call; optional with `showCacheHit`
 - `213.0k/1.0M, 20.3%` — the conversation's current footprint: tokens the server holds, context window, percentage
 - `auto` — pi's own indicator that automatic context compaction is on (hideable)
 
@@ -57,6 +57,7 @@ Line by line, here is what you are looking at.
 
 - `TG 32.4 t/s` — token generation speed, while the engine writes (and for as long as the engine is the one working: an autocompaction, a session summary, another client on the same server)
 - `PP 85.7 t/s` — prefill (prompt processing) speed, shown while the prompt is being read — the moment there is a PP and no TG yet, only the PP is shown
+- `PP …, 180.0k/213.0k, 84.5%` — how far the engine has got through *this* prompt: tokens read of the total prompt, and the percentage, in the same shape as the context figure on the line. Optional with `showPpTokens`. It comes from the engine's own counter (basalt and strata report `prefill_done` of `prompt_tokens` on `/slots`), not from an estimate, and it is what a long prompt load looks like from the inside: on a cold 100k+ prompt this is the only moving number for a minute or more. When the engine reports no such counter (llama.cpp), the two numbers and the percentage are simply absent — the PP speed still shows.
 
 **White means "now", grey means "the average it left behind".** Each rate is white while that activity is
 happening, and stays on the bar in grey (the same colour as the token totals at the start of the line)
@@ -126,6 +127,7 @@ The wait before the first token (network, queue, and the prefill — the server 
   pi's own timing. `/status-plus engine` names the source, the URL and the engine, and
   `/status-plus showSpeedSource on` puts a short marker (`⚡ basalt • …` or `⚡ measured • …`) at the
   front of the speed segment for people who want it visible on the bar.
+- **The engine reader is not tied to a session.** It watches a server, so it keeps polling across a session replacement or reload — which is what a compaction with a handoff does. The reader is also re-armed at the start of every turn, so no sequence of session events can leave it stopped while the engine is working. And "is the engine busy" is decided from two independent places, the live block of `/metrics` and the slot state on `/slots`, because a request that pi did not send (a summary request made directly by another extension) is sometimes visible in only one of them.
 - **When the bar has numbers** — whenever the engine is working, not only while pi streams a reply here.
   That includes an autocompaction, a session-title or summary request, a session being re-read at
   startup, a model still loading, and a completely different client using the same server: the bar asks
@@ -194,6 +196,8 @@ Settings persist in `~/.pi/agent/pi-status-plus.json`; a documented example ship
 | `tgWindowMs` | `1000` (100–60000) | Averaging window for the live TG and PP, from the engine or measured — longer is smoother, slower to react. Use ≥ 1000 with the default polling |
 | `refreshMs` | `500` (100–10000) | How often the numbers refresh; end-of-response values always appear immediately |
 | `showStats` / `showTtft` / `showPp` | `on` / `off` | Show the pair / TTFT / prefill speed |
+| `showCacheHit` | `on` / `off` | The `CH98.5%` cache-hit item in the stats part |
+| `showPpTokens` | `on` / `off` | The prompt progress (`tokens read/total, %`) beside PP |
 | `showAuto` | `on` / `off` | The auto-compact indicator in the context display |
 | `showCwd` | `on` / `off` | The working folder (in the position the layout gives it) |
 | `showMcp` | `on` / `off` | The MCP summary |
