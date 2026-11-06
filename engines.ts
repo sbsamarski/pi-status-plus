@@ -62,6 +62,8 @@ export interface EngineRequestNumbers {
 	ttftS: number;
 	/** Output tokens the engine counted for that request. */
 	out: number;
+	/** Tokens this request had to read: the prompt minus its cached part. */
+	promptFresh: number;
 	/** Generation time in seconds (duration minus the prefill wait). */
 	genSeconds: number;
 	/** Engine request id, for the /status-plus engine readout. */
@@ -92,6 +94,9 @@ export interface EngineView {
 	lastBusyMs: number;
 	/** Is the reader actually polling right now? */
 	watching: boolean;
+	/** Tokens the last prefill had to actually read, cached prefix excluded
+	 *  (0 = never seen). */
+	prefillTokens: number;
 	/** Prompt tokens read so far in the current prefill (0 = not reported). */
 	prefillDone: number;
 	/** Total prompt tokens of the current prefill (0 = not reported). */
@@ -159,6 +164,8 @@ export class EngineProbe {
 	private lastAdoptedId = "";
 	private prefillDone = 0;
 	private prefillTotal = 0;
+	private prefillCached = 0;
+	private lastPrefillTokens = 0;
 	/** Whether this poll's /metrics already contributed a live sample. */
 	private sampledThisPoll = false;
 	private lastFinal: EngineRequestNumbers | null = null;
@@ -218,6 +225,8 @@ export class EngineProbe {
 		this.lastTokens = null;
 		this.prefillDone = 0;
 		this.prefillTotal = 0;
+		this.prefillCached = 0;
+		this.lastPrefillTokens = 0;
 	}
 
 	/** Is the reader polling? Lets the caller re-arm it without disturbing it. */
@@ -238,6 +247,8 @@ export class EngineProbe {
 		this.lastTokens = null;
 		this.prefillDone = 0; // this request's prompt size is not known yet
 		this.prefillTotal = 0;
+		this.prefillCached = 0;
+		this.lastPrefillTokens = 0; // the previous prompt's count is not this one's
 		if (!this.stopped) this.schedule(0); // poll soon: the start counters matter
 	}
 
@@ -274,6 +285,7 @@ export class EngineProbe {
 			state: this.liveState || (this.prefillingNow ? "prefill" : ""),
 			lastBusyMs: this.lastBusyAt,
 			watching: !this.stopped && this.base !== "",
+			prefillTokens: this.lastPrefillTokens,
 			liveTg: smooth ? this.smooth("tg", windowMs) : this.liveTg,
 			// An engine that publishes a prefill mean (basalt, strata) is already
 			// giving the exact average from the start of this prompt to this moment,
@@ -599,6 +611,9 @@ export class EngineProbe {
 		if (!numbers || numbers.tg <= 0) return; // still running or not written yet
 		this.lastAdoptedId = id;
 		this.lastFinal = numbers;
+		// The engine's own record is the exact figure for a prompt that finished
+		// without us watching the slot, so it wins over whatever the slot guessed.
+		if (numbers.promptFresh > 0) this.lastPrefillTokens = numbers.promptFresh;
 	}
 
 	/** /slots carries the same live numbers on engines without a live block. */
@@ -624,6 +639,7 @@ export class EngineProbe {
 		if (!Array.isArray(parsed)) return;
 		let done = 0;
 		let total = 0;
+		let cached = 0;
 		let working = false;
 		let slotState = "";
 		for (const entry of parsed) {
@@ -632,6 +648,7 @@ export class EngineProbe {
 			if (promptTokens > total) {
 				total = promptTokens;
 				done = num(slot.prefill_done) ?? 0;
+				cached = num(slot.reused) ?? 0;
 			}
 			if (slot.is_processing === true) working = true;
 			if (typeof slot.state === "string" && slot.state.toLowerCase() !== "idle") working = true;
@@ -640,6 +657,12 @@ export class EngineProbe {
 		if (total > 0) {
 			this.prefillTotal = total;
 			this.prefillDone = Math.max(0, Math.min(done, total));
+			this.prefillCached = Math.min(cached, total);
+			// The figure that still means something after the read finishes: what this
+			// prompt had to actually read. The slot knows the whole prompt and the
+			// cached part from the first moment, so this is known before the read ends.
+			const fresh = total - this.prefillCached;
+			if (fresh > 0) this.lastPrefillTokens = fresh;
 		} else if (!working) {
 			this.prefillDone = 0;
 			this.prefillTotal = 0;
@@ -739,6 +762,7 @@ export class EngineProbe {
 			pp,
 			ttftS,
 			out,
+			promptFresh: fresh > 0 ? fresh : promptTokens,
 			genSeconds,
 			id: typeof entry.id === "string" ? entry.id : "",
 			startMs: at < 1e12 ? at * 1000 : at,
@@ -806,11 +830,14 @@ export class EngineProbe {
 					pp: dPromptSec > 0.05 && fresh > 0 ? fresh / dPromptSec : dPromptSec > 0.05 ? dPrompt / dPromptSec : 0,
 					ttftS: 0, // not a counter; pi's own TTFT stays on screen
 					out: this.reqOut > 0 ? this.reqOut : dPred,
+					promptFresh: fresh > 0 ? fresh : dPrompt,
 					genSeconds: dPredSec,
 					id: "counters",
 					startMs: base.at,
 					resolvedMs: Date.now(),
 				};
+				// What that prompt really had to read, from the counter difference.
+				if (fresh > 0) this.lastPrefillTokens = fresh;
 				this.reqEndMs = 0;
 			}
 		}

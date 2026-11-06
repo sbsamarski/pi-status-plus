@@ -38,7 +38,7 @@ One command drives everything: `/status-plus`. Every choice is saved and remembe
 The default layout, **two-line-a**:
 
 ```
-↑1.2M, ↓192k, R43.0M, CH98.5%, 213.0k/1.0M, 20.3%, auto • ⚡ TG 32.4 t/s • PP 85.7 t/s, 180.0k/213.0k, 84.5% • 120 tok in 4 s • TTFT 3.50 s • Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf • xhigh
+↑1.2M, ↓192k, R43.0M, CH98.5% • 213.0k/1.0M, 20.3%, auto • ⚡ TG 32.4 t/s ⚡ PP 86 t/s, 180.0k/213.0k, 84.5% • 120 tok in 4 s • TTFT 3.50 s • Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf • xhigh
 D:\Projects\demo-agent • 🔌 MCP: 4 servers enabled (5 disabled)
 ```
 
@@ -57,7 +57,11 @@ Line by line, here is what you are looking at.
 
 - `TG 32.4 t/s` — token generation speed, while the engine writes (and for as long as the engine is the one working: an autocompaction, a session summary, another client on the same server)
 - `PP 85.7 t/s` — prefill (prompt processing) speed, shown while the prompt is being read — the moment there is a PP and no TG yet, only the PP is shown
-- `PP …, 180.0k/213.0k, 84.5%` — how far the engine has got through *this* prompt: tokens read of the total prompt, and the percentage, in the same shape as the context figure on the line. Optional with `showPpTokens`. It comes from the engine's own counter (basalt and strata report `prefill_done` of `prompt_tokens` on `/slots`), not from an estimate, and it is what a long prompt load looks like from the inside: on a cold 100k+ prompt this is the only moving number for a minute or more. When the engine reports no such counter (llama.cpp), the two numbers and the percentage are simply absent — the PP speed still shows.
+- `PP 86 t/s` — the prefill rate as a whole number. It is a bulk read rate that moves by several tokens per second, so a decimal place would only be noise; the decode rate keeps its decimal because there it is news.
+- `PP …, 180.0k/213.0k, 84.5%` — **only while the prompt is being read**: tokens read so far, the total prompt, and the percentage, in the same shape as the context figure on the line. From the engine's own counters (basalt and strata report `prefill_done` of `prompt_tokens` on `/slots`), not an estimate. On a cold 100k+ prompt this is the only moving number for a minute or more.
+- `PP 86 t/s, 234 tok` — once the read is over. The pair would only ever say the prompt against itself, so it is replaced by the one figure that still means something: how many tokens that prompt actually had to read, with its cached prefix taken out. A 200k prompt whose prefix was cached read 234 tokens, and the bar says so.
+- `⚡` before each speed — the two rates are separate instruments, so each carries its own marker instead of sharing one bullet. Optional with `showIcon`.
+- `showPpTokens` switches the prompt numbers off; when the engine reports no counter (llama.cpp today) they are absent and the speed still shows.
 
 **White means "now", grey means "the average it left behind".** Each rate is white while that activity is
 happening, and stays on the bar in grey (the same colour as the token totals at the start of the line)
@@ -197,7 +201,7 @@ Settings persist in `~/.pi/agent/pi-status-plus.json`; a documented example ship
 | `refreshMs` | `500` (100–10000) | How often the numbers refresh; end-of-response values always appear immediately |
 | `showStats` / `showTtft` / `showPp` | `on` / `off` | Show the pair / TTFT / prefill speed |
 | `showCacheHit` | `on` / `off` | The `CH98.5%` cache-hit item in the stats part |
-| `showPpTokens` | `on` / `off` | The prompt progress (`tokens read/total, %`) beside PP |
+| `showPpTokens` | `on` / `off` | The prompt's numbers beside PP: progress while it is read, then the tokens it had to read |
 | `showAuto` | `on` / `off` | The auto-compact indicator in the context display |
 | `showCwd` | `on` / `off` | The working folder (in the position the layout gives it) |
 | `showMcp` | `on` / `off` | The MCP summary |

@@ -288,6 +288,20 @@ console.log(
 );
 commands.get("status-plus").handler("showPpTokens on", ctx);
 
+// The reported bug: once the prompt had been read, the slot still held its prompt
+// size, so the pair became "227.3k/227.3k, 100.0%" and stayed there. Idle now.
+engineState.state = "idle";
+engineState.tok_s = null;
+await new Promise((resolve) => setTimeout(resolve, 900));
+const idleRaw = clean(footerActive(200).join(" | "));
+console.log("  prefill over, engine idle:", idleRaw);
+console.log(
+	"  no dead 100% pair, count kept dim:",
+	!/100\.0%/.test(idleRaw) && /PP [\d.]+ t\/s, 1\.2k tok/.test(idleRaw) && /\u0001dim:PP/.test(footerActive(200).join(" | "))
+		? "PASS"
+		: "FAIL",
+);
+
 fakeEngine.close();
 commands.get("status-plus").handler("engineUrl off", ctx);
 

@@ -234,21 +234,32 @@ const speedData = (over, settingsOver) => ({
 });
 const ink = { fg: (role, text) => `[${role}]${text}` }; // keeps the colour role visible
 const rateFrame = (over, settingsOver) => ({
-  speed: { tg: 51.3, pp: 103.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine', engineName: 'basalt', tgLive: false, ppLive: false, ...over },
-  settings: view(settingsOver ?? {}),
+  speed: { tg: 51.3, pp: 103.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine', engineName: 'basalt', tgLive: false, ppLive: false, prefillDone: 0, prefillTotal: 0, prefillTokens: 0, ...over },
+  settings: view({ showIcon: true, ...settingsOver }),
   theme: ink,
 });
 const decodingFrame = mod.buildSpeedSegment(rateFrame({ tgLive: true }));
 const bothKeptFrame = mod.buildSpeedSegment(rateFrame({}));
-const prefillFrame = mod.buildSpeedSegment(rateFrame({ ppLive: true }));
 console.log('white while decoding:', JSON.stringify(decodingFrame));
 console.log('both dim when idle  :', JSON.stringify(bothKeptFrame));
-console.log('prefill: PP white   :', JSON.stringify(prefillFrame));
 console.log('colour rule OK:',
-  decodingFrame.includes('TG 51.3 t/s') && !decodingFrame.includes('[dim]TG')
-  && bothKeptFrame.includes('[dim]TG 51.3 t/s') && bothKeptFrame.includes('[dim]PP 103.4 t/s')
-  && prefillFrame.includes('PP 103.4 t/s') && !prefillFrame.includes('[dim]PP')
-  && prefillFrame.includes('[dim]TG 51.3 t/s'));
+  // TG keeps a decimal, PP is whole numbers, and each rate carries its own bolt.
+  decodingFrame === '\u26a1 TG 51.3 t/s \u26a1 [dim]PP 103 t/s'
+  && bothKeptFrame === '\u26a1 [dim]TG 51.3 t/s \u26a1 [dim]PP 103 t/s');
+
+// The prompt progress appears only while the prompt is being read; afterwards the
+// bar shows what that prompt had to actually read, never "x/x, 100%".
+const livePrefill = mod.buildSpeedSegment(rateFrame({ ppLive: true, prefillDone: 227300, prefillTotal: 260000 }));
+const afterPrefill = mod.buildSpeedSegment(rateFrame({ prefillDone: 227300, prefillTotal: 227300, prefillTokens: 234 }));
+const afterPrefillBig = mod.buildSpeedSegment(rateFrame({ prefillTokens: 1500 }));
+console.log('during prefill:', JSON.stringify(livePrefill));
+console.log('after prefill :', JSON.stringify(afterPrefill));
+console.log('after (1k+)   :', JSON.stringify(afterPrefillBig));
+console.log('progress pair is prefill-only OK:',
+  livePrefill.includes('PP 103 t/s, 227.3k/260.0k, 87.4%')
+  && afterPrefill.includes('\u26a1 [dim]PP 103 t/s, 234 tok')
+  && afterPrefill.includes('100.0%') === false
+  && afterPrefillBig.includes('1.5k tok'));
 
 const withMarker = mod.buildSpeedSegment(speedData({}, { showSpeedSource: true }));
 const plain = mod.buildSpeedSegment(speedData({}));
@@ -260,13 +271,17 @@ console.log('speed (marker on):', JSON.stringify(withMarker));
 console.log('speed (default):', JSON.stringify(plain));
 console.log('speed (prefill):', JSON.stringify(prefill));
 console.log('marker opt-in OK:',
-  withMarker === '\u26a1 basalt \u2022 TG 51.3 t/s \u2022 PP 103.4 t/s \u2022 112 tok in 2 s \u2022 TTFT 0.91 s'
-  && withMarker.includes('measured') === false);
+  withMarker.includes('basalt \u2022 \u26a1 TG 51.3 t/s') && !withMarker.includes('measured'));
 console.log('no source words by default OK:',
-  plain === '\u26a1 TG 51.3 t/s \u2022 PP 103.4 t/s \u2022 112 tok in 2 s \u2022 TTFT 0.91 s'
+  plain === '\u26a1 TG 51.3 t/s \u26a1 PP 103 t/s \u2022 112 tok in 2 s \u2022 TTFT 0.91 s'
   && !measuredPlain.includes('measured') && !measuredPlain.includes('basalt'));
+// showIcon off: no bolts, and the two rates go back to a bullet between them.
+const noBolts = mod.buildSpeedSegment(rateFrame({}, { showIcon: false }));
+console.log('showIcon off:', JSON.stringify(noBolts));
+console.log('bolts are optional OK:', noBolts === '[dim]TG 51.3 t/s \u2022 [dim]PP 103 t/s');
+// A prompt read that the engine never reported a size for shows the speed alone.
 console.log('prefill shows PP, never a zero TG OK:',
-  prefill === '\u26a1 PP 382.4 t/s' && !prefill.includes('TG'));
+  prefill.includes('PP 382 t/s') && !prefill.includes('TG'));
 
 for (const f of ["engine.ts", "engines.ts", "footer.ts", "settings.ts", "types.ts"]) {
 	rmSync(join(here, f), { force: true });

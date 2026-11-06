@@ -38,6 +38,14 @@ function speedText(value: number): string {
 	return value > 0 ? value.toFixed(1) : "—";
 }
 
+/** The prefill rate, whole numbers only. */
+function speedTextInt(value: number): string {
+	return value > 0 ? Math.round(value).toString() : "—";
+}
+
+/** The marker in front of each speed. */
+const BOLT = "⚡";
+
 /** Local model ids look like "llama-server=http://…/E:\...\file.gguf". Pick the file name. */
 export function modelFileName(modelId: string): string {
 	const withoutQuery = modelId.split("?")[0] ?? modelId;
@@ -105,10 +113,17 @@ export function buildStatsParts(data: FooterFrameData): StatsParts {
 
 /** Plain-text stats segment (before + context + auto), for setStatus lines. */
 export function statsPartsPlain(parts: StatsParts): string {
-	const items = [parts.before, parts.context, parts.autoItem].filter(
+	// The token totals and the context figure are separated by a bullet, so the
+	// comma inside the context figure ("207.1k/458.8k, 45.1%") stays the only
+	// comma in that stretch and reads as part of the figure.
+	const items = [parts.before, parts.context].filter(
 		(item): item is string => item !== undefined && item !== "",
 	);
-	return items.join(", ");
+	let line = items.join(" • ");
+	if (parts.autoItem !== undefined && parts.autoItem !== "") {
+		line = line.length > 0 ? `${line}, ${parts.autoItem}` : parts.autoItem;
+	}
+	return line;
 }
 
 /**
@@ -133,18 +148,31 @@ export function buildSpeedSegment(data: FooterFrameData): string {
 	const paint = (text: string, live: boolean): string =>
 		live || data.theme === undefined ? text : data.theme.fg("dim", text);
 	const label = (name: string): string => (s.showSpeedLabels ? name : "");
-	if (speed.tg > 0) parts.push(paint(`${label("TG ")}${speedText(speed.tg)} t/s`, speed.tgLive === true));
+	// Each rate carries its own marker instead of a shared bullet in front of the
+	// pair, so the two speeds read as two separate instruments.
+	const mark = s.showIcon ? `${BOLT} ` : "";
+	const rates: string[] = [];
+	if (speed.tg > 0) {
+		rates.push(mark + paint(`${label("TG ")}${speedText(speed.tg)} t/s`, speed.tgLive === true));
+	}
 	if (s.showPp && speed.pp > 0) {
-		let text = `${label("PP ")}${speedText(speed.pp)} t/s`;
-		// How far the engine has got through the prompt, in the same shape as the
-		// context figure on the same line: read so far, total, and the percentage.
-		if (s.showPpTokens && speed.prefillTotal > 0) {
+		// No decimals on a prefill rate: it is a bulk read rate that bounces by a
+		// few tokens per second, and the decimal place only pretends to be news.
+		let text = `${label("PP ")}${speedTextInt(speed.pp)} t/s`;
+		if (s.showPpTokens && speed.ppLive === true && speed.prefillTotal > 0) {
+			// How far the engine has got through the prompt, in the shape of the
+			// context figure on the same line. Only while the read is running: after
+			// it finishes the pair would be the prompt against itself, always 100%.
 			const done = Math.min(speed.prefillDone, speed.prefillTotal);
 			const pct = (done / speed.prefillTotal) * 100;
 			text += `, ${formatTokensCtx(done)}/${formatTokensCtx(speed.prefillTotal)}, ${pct.toFixed(1)}%`;
+		} else if (s.showPpTokens && speed.prefillTokens > 0) {
+			// Finished: what that prompt actually had to read, cached prefix excluded.
+			text += `, ${formatTokensCtx(speed.prefillTokens)} tok`;
 		}
-		parts.push(paint(text, speed.ppLive === true));
+		rates.push(mark + paint(text, speed.ppLive === true));
 	}
+	if (rates.length > 0) parts.push(s.showIcon ? rates.join(" ") : joinBullet(rates));
 	if (s.showStats && speed.statsTokens > 0) {
 		const seconds = speed.statsSeconds;
 		const tokens = Math.round(speed.statsTokens);
@@ -152,9 +180,7 @@ export function buildSpeedSegment(data: FooterFrameData): string {
 	}
 	if (s.showTtft && speed.ttft > 0) parts.push(`TTFT ${speed.ttft.toFixed(2)} s`);
 
-	const joined = joinBullet(parts);
-	if (joined.length === 0) return "";
-	return s.showIcon ? `⚡ ${joined}` : joined;
+	return joinBullet(parts);
 }
 
 /** Approximate the stock footer's line 1: "cwd (branch)". */

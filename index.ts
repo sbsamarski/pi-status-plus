@@ -225,6 +225,7 @@ function measuredSnapshot(): SpeedSnapshot {
 		// can say, so the measured path shows no progress.
 		prefillDone: 0,
 		prefillTotal: 0,
+		prefillTokens: 0,
 		source: "measured",
 		engineName: "",
 	};
@@ -312,6 +313,7 @@ function engineSnapshot(): SpeedSnapshot {
 			ppLive: view.prefilling && view.livePp > 0,
 			prefillDone: view.prefillDone,
 			prefillTotal: view.prefillTotal,
+			prefillTokens: view.prefillTokens,
 			source: "engine",
 			engineName: view.name,
 		});
@@ -331,6 +333,7 @@ function engineSnapshot(): SpeedSnapshot {
 			ppLive: false,
 			prefillDone: view.prefillDone,
 			prefillTotal: view.prefillTotal,
+			prefillTokens: view.prefillTokens,
 			source: "engine",
 			engineName: view.name,
 		});
@@ -342,6 +345,7 @@ function engineSnapshot(): SpeedSnapshot {
 		engineName: view.reachable ? view.name : "",
 		prefillDone: view.prefillDone,
 		prefillTotal: view.prefillTotal,
+		prefillTokens: view.prefillTokens,
 	});
 }
 
@@ -431,9 +435,13 @@ function stripAnsi(text: string): string {
 	return text.replace(/\u001b\[[0-9;]*m/g, "").replace(/\u001b\][^\x07]*\x07/g, "");
 }
 
-/** Join the stats pieces: before, context (colored), auto. */
+/**
+ * Join the stats pieces: before, context (colored), auto.
+ * A bullet separates the token totals from the context figure, so the comma
+ * inside the figure ("207.1k/458.8k, 45.1%") stays the only comma in that stretch.
+ */
 function composeStatsLine(theme: FooterFrameData["theme"], parts: StatsParts): string {
-	const head = parts.before.length > 0 ? `${parts.before}, ` : "";
+	const head = parts.before.length > 0 ? `${parts.before} • ` : "";
 	const auto = parts.autoItem !== undefined ? `, ${parts.autoItem}` : "";
 	return `${theme.fg("dim", head)}${parts.contextColored}${theme.fg("dim", auto)}`;
 }
