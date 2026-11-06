@@ -233,9 +233,11 @@ const speedData = (over, settingsOver) => ({
   theme,
 });
 const ink = { fg: (role, text) => `[${role}]${text}` }; // keeps the colour role visible
-const rateFrame = (over, settingsOver) => ({
-  speed: { tg: 51.3, pp: 103.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine', engineName: 'basalt', tgLive: false, ppLive: false, prefillDone: 0, prefillTotal: 0, prefillTokens: 0, ...over },
+const rateFrame = (over, settingsOver, statsOver) => ({
+  speed: { tg: 51.3, pp: 103.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine', engineName: 'basalt', tgLive: false, ppLive: false, prefillDone: 0, prefillTotal: 0, ...over },
   settings: view({ showIcon: true, ...settingsOver }),
+  stats: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, cacheHitRate: undefined,
+           contextTokens: 225000, realContextTokens: 225000, contextWindow: 458800, autoCompact: false, ...statsOver },
   theme: ink,
 });
 const decodingFrame = mod.buildSpeedSegment(rateFrame({ tgLive: true }));
@@ -249,17 +251,32 @@ console.log('colour rule OK:',
 
 // The prompt progress appears only while the prompt is being read; afterwards the
 // bar shows what that prompt had to actually read, never "x/x, 100%".
-const livePrefill = mod.buildSpeedSegment(rateFrame({ ppLive: true, prefillDone: 227300, prefillTotal: 260000 }));
+// The lie the slot tells on a warm session: cached tokens count as read, so the
+// counter starts at the whole prompt and can only say 100%.
+const warmLie = mod.buildSpeedSegment(rateFrame({ ppLive: true, prefillDone: 227300, prefillTotal: 227300 }));
+// A real read: a third of the prompt done, well below what the session already holds.
+const realRead = mod.buildSpeedSegment(rateFrame({ ppLive: true, prefillDone: 90000, prefillTotal: 227300 }));
+// A cold load of the whole session: honest while it climbs, and it stops being
+// shown the moment it reports itself complete - which is when it would end anyway.
+const coldEarly = mod.buildSpeedSegment(rateFrame({ ppLive: true, prefillDone: 60000, prefillTotal: 227300 }, {}, { realContextTokens: 0, contextTokens: 0 }));
+const coldFinal = mod.buildSpeedSegment(rateFrame({ ppLive: true, prefillDone: 227300, prefillTotal: 227300 }, {}, { realContextTokens: 0, contextTokens: 0 }));
+console.log('warm session, lying counter:', JSON.stringify(warmLie));
+console.log('warm session, real read   :', JSON.stringify(realRead));
+console.log('cold load, climbing       :', JSON.stringify(coldEarly));
+console.log('cold load, at the end     :', JSON.stringify(coldFinal));
+console.log('progress is shown only when it is honest OK:',
+  warmLie === '\u26a1 [dim]TG 51.3 t/s \u26a1 PP 103 t/s'
+  && realRead.includes('PP 103 t/s, 90.0k/227.3k, 39.6%')
+  && coldEarly.includes('60.0k/227.3k, 26.4%')
+  && coldFinal === '\u26a1 [dim]TG 51.3 t/s \u26a1 PP 103 t/s');
 // After the read the speed stands alone. A slot keeps reporting the prompt size
 // it finished with, so any figure taken from it afterwards is the prompt against
 // itself - and an engine's per-request fresh-token count is not something the bar
 // should guess at.
 const afterPrefill = mod.buildSpeedSegment(rateFrame({ prefillDone: 227300, prefillTotal: 227300 }));
-console.log('during prefill:', JSON.stringify(livePrefill));
 console.log('after prefill :', JSON.stringify(afterPrefill));
 console.log('progress pair is prefill-only OK:',
-  livePrefill.includes('PP 103 t/s, 227.3k/260.0k, 87.4%')
-  && afterPrefill === '\u26a1 [dim]TG 51.3 t/s \u26a1 [dim]PP 103 t/s');
+  afterPrefill === '\u26a1 [dim]TG 51.3 t/s \u26a1 [dim]PP 103 t/s');
 
 const withMarker = mod.buildSpeedSegment(speedData({}, { showSpeedSource: true }));
 const plain = mod.buildSpeedSegment(speedData({}));

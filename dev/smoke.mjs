@@ -218,6 +218,9 @@ console.log(
 // ---------------------------------------------------------------------------
 console.log("\n=== engine busy while pi is idle ===");
 const engineState = { state: "generating", tok_s: 44, prefill: 0, generated: 900 };
+// What /slots says about the current prompt. `done` equal to `total` is what a
+// warm session looks like: the cached prefix already counts as read.
+const slotReport = { total: 1200, done: 900 };
 const fakeEngine = http.createServer((req, res) => {
 	if (req.url === "/health") {
 		res.writeHead(200, { "Content-Type": "application/json" });
@@ -227,7 +230,7 @@ const fakeEngine = http.createServer((req, res) => {
 	if (req.url === "/slots") {
 		// Prefill progress, which /metrics does not carry: tokens read of prompt total.
 		res.writeHead(200, { "Content-Type": "application/json" });
-		res.end(JSON.stringify([{ id: 0, is_processing: true, state: "decoding", prompt_tokens: 1200, prefill_done: 900, generated: 500, tok_s: 46 }]));
+		res.end(JSON.stringify([{ id: 0, is_processing: true, state: "decoding", prompt_tokens: slotReport.total, prefill_done: slotReport.done, generated: 500, tok_s: 46 }]));
 		return;
 	}
 	if (req.url === "/metrics") {
@@ -287,6 +290,24 @@ console.log(
 	!/900\/1\.2k/.test(clean(footerActive(160).join(" | "))) ? "PASS" : "FAIL",
 );
 commands.get("status-plus").handler("showPpTokens on", ctx);
+
+// The reported bug, end to end: a warm session where the slot counts the cached
+// prefix as already read, so the counter sits on the whole prompt from the first
+// poll. The bar must show the rate alone, not "227.3k/227.3k, 100.0%".
+engineState.state = "reading";
+engineState.tok_s = null;
+slotReport.done = slotReport.total;
+await new Promise((resolve) => setTimeout(resolve, 900));
+const lyingLine = clean(footerActive(220).join(" | "));
+console.log("  warm prefill, counter at the total:", lyingLine);
+console.log(
+	"  lying progress suppressed:",
+	!/100\.0%/.test(lyingLine) && /PP \d+ t\/s(?!\d)/.test(lyingLine) && !/\d\/1\.2k/.test(lyingLine)
+		? "PASS"
+		: "FAIL",
+);
+slotReport.done = 900;
+engineState.state = "idle";
 
 // The reported bug: once the prompt had been read, the slot still held its prompt
 // size, so the pair became "227.3k/227.3k, 100.0%" and stayed there. Idle now.

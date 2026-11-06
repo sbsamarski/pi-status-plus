@@ -9,7 +9,7 @@
  */
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { FooterFrameData, StatsParts } from "./types.js";
+import type { FooterFrameData, SpeedSnapshot, StatsParts, UsageStats } from "./types.js";
 
 /** Minimum spaces between the left part and the right-aligned part. */
 const MIN_GAP = 3;
@@ -36,6 +36,33 @@ export function formatTokensCtx(count: number): string {
 /** One decimal, trailing ".0" kept (aligned speeds read better). */
 function speedText(value: number): string {
 	return value > 0 ? value.toFixed(1) : "—";
+}
+
+/**
+ * Does the engine's prefill counter actually describe progress right now?
+ *
+ * A slot counts tokens it took from the cache as already read. On a warm session
+ * that means the counter starts at the whole prompt: "227.3k/227.3k, 100.0%" from
+ * the first moment, which is not a measurement of anything. Two tests catch it:
+ *
+ *   - The read reports itself complete before it started (100% at t=0). The one
+ *     case where this is true is a cold load of the whole session, and in that
+ *     case the read is over the moment it reads its last token anyway.
+ *   - The counter lands on what the conversation already holds. The prompt of a
+ *     live session is that session plus a little, so a progress figure sitting on
+ *     the context size within a rounding distance is the cached total, not a
+ *     position inside the read. A genuine early read is far below it.
+ *
+ * When either is true the bar shows the prefill speed alone.
+ */
+function progressIsHonest(speed: SpeedSnapshot, done: number, stats: UsageStats | undefined): boolean {
+	if (speed.prefillTotal <= 0 || done <= 0) return false;
+	if (done >= speed.prefillTotal * 0.995) return false;
+	// No stats on the frame (a caller drawing the speed alone): nothing to compare
+	// the counter against, so only the completeness test applies.
+	const held = Math.max(stats?.realContextTokens ?? 0, stats?.contextTokens ?? 0);
+	if (held <= 0) return true;
+	return Math.abs(done - held) > Math.max(500, speed.prefillTotal * 0.02);
 }
 
 /** The prefill rate, whole numbers only. */
@@ -160,13 +187,11 @@ export function buildSpeedSegment(data: FooterFrameData): string {
 		// No decimals on a prefill rate: it is a bulk read rate that bounces by a
 		// few tokens per second, and the decimal place only pretends to be news.
 		let text = `${label("PP ")}${speedTextInt(speed.pp)} t/s`;
-		if (s.showPpTokens && speed.ppLive === true && speed.prefillTotal > 0) {
+		const done = Math.min(speed.prefillDone, speed.prefillTotal);
+		if (s.showPpTokens && speed.ppLive === true && progressIsHonest(speed, done, data.stats)) {
 			// How far the engine has got through the prompt, in the shape of the
-			// context figure on the same line. Only while the read runs: the slot keeps
-			// reporting the prompt size after the read, so afterwards the pair would be
-			// the prompt against itself - a figure that can only say 100%, and nothing
-			// else to show, so the speed stands alone.
-			const done = Math.min(speed.prefillDone, speed.prefillTotal);
+			// context figure on the same line. Only while the read runs, and only when
+			// the counter is really counting - see progressIsHonest.
 			const pct = (done / speed.prefillTotal) * 100;
 			text += `, ${formatTokensCtx(done)}/${formatTokensCtx(speed.prefillTotal)}, ${pct.toFixed(1)}%`;
 		}

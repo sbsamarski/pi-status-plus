@@ -63,6 +63,8 @@ Line by line, here is what you are looking at.
 - `⚡` before each speed — the two rates are separate instruments, so each carries its own marker instead of sharing one bullet. Optional with `showIcon`.
 - `showPpTokens` switches the prompt progress off altogether; when the engine reports no counter (llama.cpp today) it is absent and the speed still shows.
 
+**The progress is only shown when the counter is really counting.** A slot counts the tokens it took from the cache as already read, so on a warm session the counter starts at the whole prompt — `227.3k/227.3k, 100.0%` from the first instant, which measures nothing. The bar therefore refuses the figures in two cases: when the read reports itself complete before it has meaningfully started, and when the progress number lands on what the conversation already holds (within a small tolerance), because the prompt of a live session is that session plus a little, so a counter sitting there is the cached total rather than a position inside the read. The one case where the second test fires on real data is the last moment of a cold load of the whole session — and that read is over a heartbeat later, so nothing useful is lost.
+
 **No bullet in front of the bolts.** Each speed already leads with an icon, so the bar puts a plain space between the context figure and the first speed — an icon and a bullet in front of the same word is one separator too many. Turn `showIcon` off and the bullet comes back, because then something has to divide the two groups.
 
 **White means "now", grey means "the average it left behind".** Each rate is white while that activity is
