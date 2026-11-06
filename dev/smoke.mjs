@@ -296,11 +296,25 @@ await new Promise((resolve) => setTimeout(resolve, 900));
 const idleRaw = clean(footerActive(200).join(" | "));
 console.log("  prefill over, engine idle:", idleRaw);
 console.log(
-	"  no dead 100% pair, count kept dim:",
-	!/100\.0%/.test(idleRaw) && /PP [\d.]+ t\/s, 1\.2k tok/.test(idleRaw) && /\u0001dim:PP/.test(footerActive(200).join(" | "))
+	"  after prefill: speed only, no stale figures:",
+	!/100\.0%/.test(idleRaw) && !/tok, /.test(idleRaw) && /PP \d+ t\/s/.test(idleRaw) && !/tok\b.*\d+k?\/\d/.test(idleRaw)
 		? "PASS"
 		: "FAIL",
 );
+
+// Each speed leads with a bolt, so no bullet is added in front of it.
+commands.get("status-plus").handler("showIcon on", ctx);
+await new Promise((resolve) => setTimeout(resolve, 400));
+const boltLine = clean(footerActive(220).join(" | "));
+console.log("  with bolts:", boltLine);
+console.log("  no bullet before the bolt:", /• \u26a1/.test(boltLine) ? "FAIL" : "PASS");
+commands.get("status-plus").handler("showIcon off", ctx);
+await new Promise((resolve) => setTimeout(resolve, 400));
+console.log(
+	"  bullet returns when the icon is off:",
+	/• \u26a1|• TG/.test(clean(footerActive(220).join(" | "))) ? "PASS" : "FAIL",
+);
+commands.get("status-plus").handler("showIcon on", ctx);
 
 fakeEngine.close();
 commands.get("status-plus").handler("engineUrl off", ctx);

@@ -94,9 +94,6 @@ export interface EngineView {
 	lastBusyMs: number;
 	/** Is the reader actually polling right now? */
 	watching: boolean;
-	/** Tokens the last prefill had to actually read, cached prefix excluded
-	 *  (0 = never seen). */
-	prefillTokens: number;
 	/** Prompt tokens read so far in the current prefill (0 = not reported). */
 	prefillDone: number;
 	/** Total prompt tokens of the current prefill (0 = not reported). */
@@ -285,7 +282,6 @@ export class EngineProbe {
 			state: this.liveState || (this.prefillingNow ? "prefill" : ""),
 			lastBusyMs: this.lastBusyAt,
 			watching: !this.stopped && this.base !== "",
-			prefillTokens: this.lastPrefillTokens,
 			liveTg: smooth ? this.smooth("tg", windowMs) : this.liveTg,
 			// An engine that publishes a prefill mean (basalt, strata) is already
 			// giving the exact average from the start of this prompt to this moment,

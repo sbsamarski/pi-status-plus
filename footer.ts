@@ -43,8 +43,9 @@ function speedTextInt(value: number): string {
 	return value > 0 ? Math.round(value).toString() : "—";
 }
 
-/** The marker in front of each speed. */
-const BOLT = "⚡";
+/** The marker in front of each speed. Exported so the line builder can tell a
+ *  segment that already starts with an icon from one that does not. */
+export const BOLT = "⚡";
 
 /** Local model ids look like "llama-server=http://…/E:\...\file.gguf". Pick the file name. */
 export function modelFileName(modelId: string): string {
@@ -161,14 +162,13 @@ export function buildSpeedSegment(data: FooterFrameData): string {
 		let text = `${label("PP ")}${speedTextInt(speed.pp)} t/s`;
 		if (s.showPpTokens && speed.ppLive === true && speed.prefillTotal > 0) {
 			// How far the engine has got through the prompt, in the shape of the
-			// context figure on the same line. Only while the read is running: after
-			// it finishes the pair would be the prompt against itself, always 100%.
+			// context figure on the same line. Only while the read runs: the slot keeps
+			// reporting the prompt size after the read, so afterwards the pair would be
+			// the prompt against itself - a figure that can only say 100%, and nothing
+			// else to show, so the speed stands alone.
 			const done = Math.min(speed.prefillDone, speed.prefillTotal);
 			const pct = (done / speed.prefillTotal) * 100;
 			text += `, ${formatTokensCtx(done)}/${formatTokensCtx(speed.prefillTotal)}, ${pct.toFixed(1)}%`;
-		} else if (s.showPpTokens && speed.prefillTokens > 0) {
-			// Finished: what that prompt actually had to read, cached prefix excluded.
-			text += `, ${formatTokensCtx(speed.prefillTokens)} tok`;
 		}
 		rates.push(mark + paint(text, speed.ppLive === true));
 	}

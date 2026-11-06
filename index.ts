@@ -50,6 +50,7 @@ import { SpeedEngine } from "./engine.js";
 import { EngineProbe } from "./engines.js";
 import {
 	assembleLine,
+	BOLT,
 	buildRightPart,
 	buildSpeedSegment,
 	buildStatsParts,
@@ -225,7 +226,6 @@ function measuredSnapshot(): SpeedSnapshot {
 		// can say, so the measured path shows no progress.
 		prefillDone: 0,
 		prefillTotal: 0,
-		prefillTokens: 0,
 		source: "measured",
 		engineName: "",
 	};
@@ -313,7 +313,6 @@ function engineSnapshot(): SpeedSnapshot {
 			ppLive: view.prefilling && view.livePp > 0,
 			prefillDone: view.prefillDone,
 			prefillTotal: view.prefillTotal,
-			prefillTokens: view.prefillTokens,
 			source: "engine",
 			engineName: view.name,
 		});
@@ -333,7 +332,6 @@ function engineSnapshot(): SpeedSnapshot {
 			ppLive: false,
 			prefillDone: view.prefillDone,
 			prefillTotal: view.prefillTotal,
-			prefillTokens: view.prefillTokens,
 			source: "engine",
 			engineName: view.name,
 		});
@@ -345,7 +343,6 @@ function engineSnapshot(): SpeedSnapshot {
 		engineName: view.reachable ? view.name : "",
 		prefillDone: view.prefillDone,
 		prefillTotal: view.prefillTotal,
-		prefillTokens: view.prefillTokens,
 	});
 }
 
@@ -430,6 +427,20 @@ function buildFrame(ctx: ExtensionContext, width: number, theme: FooterFrameData
 	};
 }
 
+/**
+ * Put the speed segment after the stats.
+ *
+ * Each speed leads with its own bolt when showIcon is on, and a bullet in front of
+ * that bolt is one separator too many - the icon already separates. Without a bolt
+ * in front (icon off, or a segment that carries only the token pair) the bullet
+ * stays, because then something has to divide the two groups.
+ */
+function withSpeed(stats: string, speed: string): string {
+	if (speed.length === 0) return stats;
+	if (stats.length === 0) return speed;
+	return speed.trimStart().startsWith(BOLT) ? `${stats} ${speed}` : joinBullet([stats, speed]);
+}
+
 /** Strip ANSI colour escapes (the mcp segment arrives styled by its extension). */
 function stripAnsi(text: string): string {
 	return text.replace(/\u001b\[[0-9;]*m/g, "").replace(/\u001b\][^\x07]*\x07/g, "");
@@ -471,9 +482,9 @@ function buildLines(ctx: ExtensionContext, width: number, theme: FooterFrameData
 
 	// --- status-line layout: single plain line, stock footer untouched -----
 	if (s.layout === "status-line") {
+		const stats = composeStatsLinePlain(parts);
 		const items = joinBullet([
-			composeStatsLinePlain(parts) || undefined,
-			speed || undefined,
+			withSpeed(stats, speed),
 			modelPart,
 			thinkingPart,
 			folder,
@@ -484,7 +495,7 @@ function buildLines(ctx: ExtensionContext, width: number, theme: FooterFrameData
 
 	// --- one-line: everything on one line (no MCP) --------------------------
 	if (s.layout === "one-line") {
-		const left = joinBullet([composeStatsLine(theme, parts), speed || undefined]);
+		const left = withSpeed(composeStatsLine(theme, parts), speed);
 		const right = joinBullet([modelPart, thinkingPart, folder]);
 		lines.push(assembleLine(left, right, safeWidth));
 		return lines;
@@ -492,7 +503,7 @@ function buildLines(ctx: ExtensionContext, width: number, theme: FooterFrameData
 
 	// --- two-line-a: line 1 = stats • speed • model • thinking; line 2 = folder • MCP
 	if (s.layout === "two-line-a") {
-		const left = joinBullet([composeStatsLine(theme, parts), speed || undefined, modelPart, thinkingPart]);
+		const left = joinBullet([withSpeed(composeStatsLine(theme, parts), speed), modelPart, thinkingPart]);
 		lines.push(assembleLine(left, "", safeWidth));
 		const tail = joinBullet([folder, mcp]);
 		if (tail.length > 0) lines.push(theme.fg("dim", truncate(tail, safeWidth)));

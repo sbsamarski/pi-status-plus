@@ -49,9 +49,6 @@ export interface SpeedSnapshot {
 	 *  prompt (0 = the engine does not report it, so nothing is shown). */
 	prefillDone: number;
 	prefillTotal: number;
-	/** Tokens the last prefill had to actually read, cached prefix excluded. Shown
-	 *  once the read is over, when the progress pair would only ever say 100%. */
-	prefillTokens: number;
 	/** Where tg/pp/ttft came from: the engine itself, or our own measurement. */
 	source: "engine" | "measured";
 	/** Engine the numbers came from ("" when unknown or measured). */

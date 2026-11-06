@@ -250,16 +250,16 @@ console.log('colour rule OK:',
 // The prompt progress appears only while the prompt is being read; afterwards the
 // bar shows what that prompt had to actually read, never "x/x, 100%".
 const livePrefill = mod.buildSpeedSegment(rateFrame({ ppLive: true, prefillDone: 227300, prefillTotal: 260000 }));
-const afterPrefill = mod.buildSpeedSegment(rateFrame({ prefillDone: 227300, prefillTotal: 227300, prefillTokens: 234 }));
-const afterPrefillBig = mod.buildSpeedSegment(rateFrame({ prefillTokens: 1500 }));
+// After the read the speed stands alone. A slot keeps reporting the prompt size
+// it finished with, so any figure taken from it afterwards is the prompt against
+// itself - and an engine's per-request fresh-token count is not something the bar
+// should guess at.
+const afterPrefill = mod.buildSpeedSegment(rateFrame({ prefillDone: 227300, prefillTotal: 227300 }));
 console.log('during prefill:', JSON.stringify(livePrefill));
 console.log('after prefill :', JSON.stringify(afterPrefill));
-console.log('after (1k+)   :', JSON.stringify(afterPrefillBig));
 console.log('progress pair is prefill-only OK:',
   livePrefill.includes('PP 103 t/s, 227.3k/260.0k, 87.4%')
-  && afterPrefill.includes('\u26a1 [dim]PP 103 t/s, 234 tok')
-  && afterPrefill.includes('100.0%') === false
-  && afterPrefillBig.includes('1.5k tok'));
+  && afterPrefill === '\u26a1 [dim]TG 51.3 t/s \u26a1 [dim]PP 103 t/s');
 
 const withMarker = mod.buildSpeedSegment(speedData({}, { showSpeedSource: true }));
 const plain = mod.buildSpeedSegment(speedData({}));
