@@ -48,6 +48,9 @@ export interface StatusPlusSettings {
 	/** Show the prefill's own progress (tokens read of total, and the percentage)
 	 *  beside the PP speed. */
 	showPpTokens: boolean;
+	/** Show how many tokens have been written so far beside the TG speed, while the
+	 *  engine is answering something other than pi (a compaction). */
+	showTgTokens: boolean;
 	/** Show the auto-compact indicator (", auto" inside the context parentheses). */
 	showAuto: boolean;
 	/** Show the working folder. */
@@ -94,6 +97,7 @@ export const DEFAULTS: StatusPlusSettings = {
 	showPp: true,
 	showCacheHit: true,
 	showPpTokens: true,
+	showTgTokens: true,
 	showAuto: true,
 	showCwd: true,
 	showMcp: true,
@@ -130,6 +134,7 @@ const BOOL_KEYS = [
 	"showPp",
 	"showCacheHit",
 	"showPpTokens",
+	"showTgTokens",
 	"showAuto",
 	"showCwd",
 	"showMcp",

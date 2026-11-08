@@ -50,13 +50,12 @@ export interface SpeedSnapshot {
 	prefillDone: number;
 	prefillTotal: number;
 	/**
-	 * Work in progress to show in place of the context figure while the engine is
-	 * busy with something that is not pi's own message - a compaction, another
-	 * client. pi cannot know how far such a request has got; only the engine can.
-	 * total = 0 means "show pi's own context figure".
+	 * Tokens generated so far in an answer the engine is writing that is not pi's
+	 * own message - a compaction summary, another client. Shown beside the TG rate,
+	 * as a count: a generation can stop at any moment, so its total would only be
+	 * the max_tokens the request was given. 0 shows nothing.
 	 */
-	ctxDone: number;
-	ctxTotal: number;
+	genDone: number;
 	/** Where tg/pp/ttft came from: the engine itself, or our own measurement. */
 	source: "engine" | "measured";
 	/** Engine the numbers came from ("" when unknown or measured). */
@@ -100,6 +99,8 @@ export interface StatusPlusSettingsView {
 	showCacheHit: boolean;
 	/** How far the prefill has got, as tokens and a percentage, beside PP. */
 	showPpTokens: boolean;
+	/** Tokens written so far beside TG, during an answer that is not pi's. */
+	showTgTokens: boolean;
 	showAuto: boolean;
 	showCwd: boolean;
 	showMcp: boolean;

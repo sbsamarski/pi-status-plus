@@ -239,26 +239,44 @@ console.log('context format OK:', parts.context === '106.4k/260.0k, 40.9%'
 console.log('stats line:', mod.statsPartsPlain(parts));
 console.log('auto kept as its own item:', mod.statsPartsPlain(parts).endsWith(', auto'));
 
-// During a compaction (or any work the engine does that is not pi's message) the
-// context item carries the engine's progress instead of pi's figure, which cannot
-// move while a prompt pi did not build is being read.
+// The context item is always the conversation - current size of the whole window -
+// even while the engine is busy with a compaction. Engine progress belongs to the
+// rates, where it can say what it is a progress of.
 const compStats = { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0, cacheHitRate: undefined,
   contextTokens: 250000, realContextTokens: 106400, contextWindow: 260000, autoCompact: false };
-const engParts = (ctxDone, ctxTotal) => mod.buildStatsParts({
+const ctxDuringCompaction = mod.buildStatsParts({
   stats: compStats, settings: view({ showAuto: false }), theme,
-  speed: { tg: 0, pp: 0, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine',
-           engineName: 'basalt', tgLive: false, ppLive: false, prefillDone: 0, prefillTotal: 0, ctxDone, ctxTotal },
+  speed: { tg: 31.7, pp: 0, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine',
+           engineName: 'basalt', tgLive: true, ppLive: false, prefillDone: 0, prefillTotal: 0, genDone: 6171 },
+}).context;
+console.log('context during compaction:', JSON.stringify(ctxDuringCompaction));
+console.log('context item always shows the conversation OK:', ctxDuringCompaction === '106.4k/260.0k, 40.9%');
+
+// An answer the engine writes that is not pi's (a compaction summary) carries the
+// count of tokens written so far. A prefill knows its total, so PP gets the pair;
+// a generation can stop at any moment, so TG gets the bare count and no total.
+// Its own frame builder: rateFrame is defined further down, with the colour tests.
+const tgFrame = (speedOver, settingsOver) => ({
+  speed: { tg: 31.7, pp: 103.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine',
+           engineName: 'basalt', tgLive: false, ppLive: false, prefillDone: 0, prefillTotal: 0, genDone: 0,
+           ...speedOver },
+  settings: view({ showIcon: true, ...settingsOver }),
+  stats: compStats,
+  theme: { fg: (role, text) => `[${role}]${text}` }, // keeps the colour role visible
 });
-const readingPair = engParts(60200, 200400).context;
-const writingPair = engParts(6171, 48000).context;
-const piOwnPair = engParts(0, 0).context;
-console.log('compaction, reading  :', JSON.stringify(readingPair));
-console.log('compaction, writing  :', JSON.stringify(writingPair));
-console.log('nothing foreign      :', JSON.stringify(piOwnPair));
-console.log('engine progress replaces the context figure OK:',
-  readingPair === '60.2k/200.4k, 30.0%'
-  && writingPair === '6.2k/48.0k, 12.9%'
-  && piOwnPair === '106.4k/260.0k, 40.9%');
+const tgCount = mod.buildSpeedSegment(tgFrame({ tgLive: true, genDone: 6171 }));
+const tgCountOff = mod.buildSpeedSegment(tgFrame({ tgLive: true, genDone: 6171 }, { showTgTokens: false }));
+const tgPiOwn = mod.buildSpeedSegment(tgFrame({ tgLive: true, genDone: 0 }));
+const tgKept = mod.buildSpeedSegment(tgFrame({ tgLive: false, genDone: 6171 }));
+console.log('TG during compaction:', JSON.stringify(tgCount));
+console.log('TG, option off      :', JSON.stringify(tgCountOff));
+console.log("TG, pi's own answer :", JSON.stringify(tgPiOwn));
+console.log('TG kept and grey    :', JSON.stringify(tgKept));
+console.log('TG carries the generated count only while it runs OK:',
+  tgCount === '\u26a1 TG 31.7 t/s, 6.2k tok \u26a1 [dim]PP 103 t/s'
+  && tgCountOff === '\u26a1 TG 31.7 t/s \u26a1 [dim]PP 103 t/s'
+  && tgPiOwn === '\u26a1 TG 31.7 t/s \u26a1 [dim]PP 103 t/s'
+  && tgKept === '\u26a1 [dim]TG 31.7 t/s \u26a1 [dim]PP 103 t/s');
 
 // CH (cache-hit rate) is optional now.
 const chData = (showCacheHit) => ({
@@ -280,7 +298,7 @@ const speedData = (over, settingsOver) => ({
 });
 const ink = { fg: (role, text) => `[${role}]${text}` }; // keeps the colour role visible
 const rateFrame = (over, settingsOver, statsOver) => ({
-  speed: { tg: 51.3, pp: 103.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine', engineName: 'basalt', tgLive: false, ppLive: false, prefillDone: 0, prefillTotal: 0, ctxDone: 0, ctxTotal: 0, ...over },
+  speed: { tg: 51.3, pp: 103.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine', engineName: 'basalt', tgLive: false, ppLive: false, prefillDone: 0, prefillTotal: 0, genDone: 0, ...over },
   settings: view({ showIcon: true, ...settingsOver }),
   stats: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, cacheHitRate: undefined,
            contextTokens: 225000, realContextTokens: 225000, contextWindow: 458800, autoCompact: false, ...statsOver },

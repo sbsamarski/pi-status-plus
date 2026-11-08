@@ -264,6 +264,22 @@ const decodeRaw = footerActive(160).join(" | ");
 console.log("  decoding, pi idle:", clean(decodeRaw));
 console.log("  TG shown with no pi request:", /TG \d/.test(decodeRaw) ? "PASS" : "FAIL");
 console.log("  live TG is white:", /\u0001dim:TG/.test(decodeRaw) ? "FAIL" : "PASS");
+// The count of tokens written so far, which matters only while the engine is
+// answering something pi did not ask for. The slot reports 500 generated.
+console.log(
+	"  TG carries the generated count:",
+	/TG [\d.]+ t\/s, 500 tok/.test(clean(decodeRaw)) ? "PASS" : `FAIL: ${clean(decodeRaw)}`,
+);
+commands.get("status-plus").handler("showTgTokens off", ctx);
+await new Promise((resolve) => setTimeout(resolve, 400));
+console.log(
+	"  the generated count is optional:",
+	!/tok\b/.test(clean(footerActive(160).join(" | ")).split("\u26a1").pop() ?? "")
+		? "PASS"
+		: `FAIL: ${clean(footerActive(160).join(" | "))}`,
+);
+commands.get("status-plus").handler("showTgTokens on", ctx);
+await new Promise((resolve) => setTimeout(resolve, 400));
 
 engineState.state = "reading"; // prompt being read: a PP exists, a TG does not yet
 engineState.tok_s = null;
@@ -278,28 +294,23 @@ console.log(
 		: "FAIL",
 );
 
-// While the engine works on something that is not pi's message, the progress pair
-// belongs to the context item, and the PP item stands alone: one pair per line.
+// The context item is always the conversation - current size of the whole window -
+// even here, and the engine's read progress rides with the PP rate.
 const ppLine = clean(prefillRaw);
 console.log(
-	"  progress pair shows once, in the context item:",
-	(ppLine.match(/900\/1\.2k, 75\.0%/g) ?? []).length === 1 && /PP \d+ t\/s(?!\d)/.test(ppLine)
+	"  read progress rides with PP, context stays pi's:",
+	/PP [\d.]+ t\/s, 900\/1\.2k, 75\.0%/.test(ppLine) && /70\.3k\/92\.2k, 76\.3%/.test(ppLine)
 		? "PASS"
 		: `FAIL: ${ppLine}`,
 );
 commands.get("status-plus").handler("showPpTokens off", ctx);
 await new Promise((resolve) => setTimeout(resolve, 400));
-// With the option off the PP item must stand alone. The same figures may still
-// appear in the context item, because while the engine works on something that is
-// not pi's message that is where the engine's progress belongs.
+// With the option off the PP item stands alone, and nothing else on the line
+// repeats those figures.
 const ppOffLine = clean(footerActive(200).join(" | "));
 console.log(
 	"  prompt progress is optional:",
-	/PP [\d.]+ t\/s(?!\d)/.test(ppOffLine) && !/PP [\d.]+ t\/s, 900/.test(ppOffLine) ? "PASS" : `FAIL: ${ppOffLine}`,
-);
-console.log(
-	"  context item carries the engine pair:",
-	/\u2022 900\/1\.2k, 75\.0%/.test(ppOffLine) || /900\/1\.2k, 75\.0%/.test(ppOffLine) ? "PASS" : `FAIL: ${ppOffLine}`,
+	/PP [\d.]+ t\/s(?!\d)/.test(ppOffLine) && !/900\/1\.2k/.test(ppOffLine) ? "PASS" : `FAIL: ${ppOffLine}`,
 );
 commands.get("status-plus").handler("showPpTokens on", ctx);
 

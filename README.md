@@ -65,14 +65,16 @@ Line by line, here is what you are looking at.
 
 **The progress is only shown when the counter is really counting.** A slot counts the tokens it took from the cache as already read, so on a warm session the counter starts at the whole prompt — `227.3k/227.3k, 100.0%` from the first instant, which measures nothing. The bar therefore refuses the figures in two cases: when the read reports itself complete before it has meaningfully started, and when the progress number lands on what the conversation already holds (within a small tolerance), because the prompt of a live session is that session plus a little, so a counter sitting there is the cached total rather than a position inside the read. The one case where the second test fires on real data is the last moment of a cold load of the whole session — and that read is over a heartbeat later, so nothing useful is lost.
 
-**During work the engine does on its own, the context figure carries its progress.** When the engine is busy with something that is not pi's message — an autocompaction, a session summary, another client on the same server — pi's own context number cannot move, because the transcript is not changing here. Showing it would put a still figure where something is clearly happening. So the first item of the pair becomes what the engine reports, and it follows the two halves of a request:
+**The context figure is always the conversation** — what the server holds, of the whole window: `253.7k/458.8k, 55.3%`. It does not change hands during a compaction or a reload, because a progress figure belongs with the rate it measures, where the bar can say what kind of progress it is.
+
+**During an answer that is not pi's, `TG` carries the count of tokens written so far.**
 
 ```
-• 60.2k/200.4k, 30.0% ⚡ PP 412 t/s      while the prompt is being read: tokens read of that prompt
-• 6.2k/48.0k, 12.9%  ⚡ TG 31.7 t/s      while the answer is being written: tokens generated of its limit
+⚡ TG 31.7 t/s, 6.2k tok        a compaction summary, another client: how much is written
+⚡ PP 412 t/s, 60.2k/200.4k, 30.0%   and a read always shows the pair, because a read knows its total
 ```
 
-The totals come from the engine, not from a guess: the read total is the prompt's own size (`prompt_tokens`), and the write total is the limit that request was given (`max_tokens`) — the same two numbers basalt prints in its own log line `[server] live | s1 tg=6171/48000 31.7t/s`. When pi's own answer is streaming, the item goes back to the real context figure (`253.7k/458.8k, 55.3%`), which is the more useful number there. The prompt's progress is then shown after `PP` as before, and never in both places on one line.
+The count has no total beside it on purpose. A prefill always knows how many tokens it has to load, so `PP` gets `read/total, %`. A generation can stop at any moment, so the only total the engine can offer is the `max_tokens` the request happened to be given — a limit, not progress, and a number that would mean something different on every request. It appears only while that foreign answer is actually being written: during pi's own message the `112 tok in 2 s` pair already says it, and a grey kept rate carries no count at all. `showTgTokens` switches it off.
 
 **No bullet in front of the bolts.** Each speed already leads with an icon, so the bar puts a plain space between the context figure and the first speed — an icon and a bullet in front of the same word is one separator too many. Turn `showIcon` off and the bullet comes back, because then something has to divide the two groups.
 
@@ -215,6 +217,7 @@ Settings persist in `~/.pi/agent/pi-status-plus.json`; a documented example ship
 | `showStats` / `showTtft` / `showPp` | `on` / `off` | Show the pair / TTFT / prefill speed |
 | `showCacheHit` | `on` / `off` | The `CH98.5%` cache-hit item in the stats part |
 | `showPpTokens` | `on` / `off` | The prompt's progress (`tokens read/total, %`) beside PP, shown while the prompt is being read |
+| `showTgTokens` | `on` / `off` | Tokens written so far (`6.2k tok`) beside TG, shown while the engine answers something that is not pi's message |
 | `showAuto` | `on` / `off` | The auto-compact indicator in the context display |
 | `showCwd` | `on` / `off` | The working folder (in the position the layout gives it) |
 | `showMcp` | `on` / `off` | The MCP summary |

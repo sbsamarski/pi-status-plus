@@ -99,12 +99,11 @@ export interface EngineView {
 	/** Total prompt tokens of the current prefill (0 = not reported). */
 	prefillTotal: number;
 	/**
-	 * The work in progress, as a pair for the context item: tokens read of the
-	 * prompt being read while the prompt is read, and tokens generated of the
-	 * request's limit while the answer is generated (0 = nothing to show).
+	 * Tokens generated so far in the work the engine is doing right now (0 = none).
+	 * A prefill always knows its total, so progress there is the pair after PP; a
+	 * generation can stop at any moment, so its useful figure is this bare count.
 	 */
-	progressDone: number;
-	progressTotal: number;
+	genDone: number;
 	/** Live decode speed, averaged over the window passed to view() (0 = none). */
 	liveTg: number;
 	/** Live prefill speed, averaged over the window passed to view(). */
@@ -193,9 +192,8 @@ export class EngineProbe {
 	private idleSince = 0;
 	private lastAdoptedId = "";
 	private prefillDone = 0;
-	/** Decode progress from the slot: tokens generated of the request's limit. */
+	/** Tokens generated in the current activity, from the slot's own counter. */
 	private decodeDone = 0;
-	private decodeTotal = 0;
 	private prefillTotal = 0;
 	private prefillCached = 0;
 	private lastPrefillTokens = 0;
@@ -308,18 +306,7 @@ export class EngineProbe {
 		// the last activity's samples, and reporting their average as a live rate
 		// would put a moving number on a bar that has nothing running.
 		const smooth = windowMs >= MIN_SMOOTH_SPAN_MS && this.busyMs > 0;
-		// Which half of a request is running decides the pair. Reading: how far into
-		// the prompt, of the prompt's own size. Generating: how far into the answer,
-		// of the limit that answer was given. A read that reports itself complete at
-		// the first moment is the cached prefix, not progress, so it yields nothing.
-		const reading = this.prefillingNow || /read|prefill|prompt/.test(this.liveState);
-		const progress = !this.busyMs
-			? { done: 0, total: 0 }
-			: reading && this.prefillTotal > 0 && this.prefillDone < this.prefillTotal * 0.995
-				? { done: this.prefillDone, total: this.prefillTotal }
-				: !reading && this.decodeTotal > 0
-					? { done: Math.min(this.decodeDone, this.decodeTotal), total: this.decodeTotal }
-					: { done: 0, total: 0 };
+
 		return {
 			name: this.name || "engine",
 			url: this.base,
@@ -341,8 +328,7 @@ export class EngineProbe {
 			livePpRaw: this.livePp,
 			prefillDone: this.prefillDone,
 			prefillTotal: this.prefillTotal,
-			progressDone: progress.done,
-			progressTotal: progress.total,
+			genDone: this.busyMs > 0 ? this.decodeDone : 0,
 			final: this.lastFinal,
 			kind: this.kind,
 			note: this.note,
@@ -687,19 +673,14 @@ export class EngineProbe {
 		let total = 0;
 		let cached = 0;
 		let genDone = 0;
-		let genTotal = 0;
 		let working = false;
 		let slotState = "";
 		for (const entry of parsed) {
 			const slot = entry as Record<string, unknown>;
-			// Decode side: basalt's own log line for a working slot reads
-			// "s1 tg=6171/48000 31.7t/s", which is generated of max_tokens.
+			// The slot's own count of tokens written so far - basalt's log line for a
+			// working slot reads "s1 tg=6171/48000", where 6171 is this figure.
 			const generated = num(slot.generated) ?? 0;
-			const maxTokens = num(slot.max_tokens) ?? 0;
-			if (generated > genDone && maxTokens > 0) {
-				genDone = generated;
-				genTotal = maxTokens;
-			}
+			if (generated > genDone) genDone = generated;
 			const promptTokens = num(slot.prompt_tokens) ?? 0;
 			if (promptTokens > total) {
 				total = promptTokens;
@@ -724,7 +705,6 @@ export class EngineProbe {
 			this.prefillTotal = 0;
 		}
 		this.decodeDone = working ? genDone : 0;
-		this.decodeTotal = working ? genTotal : 0;
 		if (!working) return;
 		this.idleSince = 0;
 		this.lastBusyAt = Date.now();

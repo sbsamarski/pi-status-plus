@@ -226,8 +226,7 @@ function measuredSnapshot(): SpeedSnapshot {
 		// can say, so the measured path shows no progress.
 		prefillDone: 0,
 		prefillTotal: 0,
-		ctxDone: 0,
-		ctxTotal: 0,
+		genDone: 0,
 		source: "measured",
 		engineName: "",
 	};
@@ -315,12 +314,12 @@ function engineSnapshot(): SpeedSnapshot {
 			ppLive: view.prefilling && view.livePp > 0,
 			prefillDone: view.prefillDone,
 			prefillTotal: view.prefillTotal,
-			// While the engine works on something that is not pi's message, pi's own
-			// context figure cannot move - the transcript is not changing here - so the
-			// engine's progress is the only honest pair to show: tokens read of the
-			// prompt during the read, tokens generated of the limit during the answer.
-			ctxDone: ours ? 0 : view.progressDone,
-			ctxTotal: ours ? 0 : view.progressTotal,
+			// How many tokens are written so far matters only while the engine answers
+			// something pi did not ask for, such as a compaction summary: during pi's
+			// own message the "112 tok in 2 s" pair already carries it. No total goes
+			// with it, because a generation can stop at any moment and the only total
+			// the engine knows is the max_tokens the request was given.
+			genDone: ours ? 0 : view.genDone,
 			source: "engine",
 			engineName: view.name,
 		});
@@ -340,8 +339,7 @@ function engineSnapshot(): SpeedSnapshot {
 			ppLive: false,
 			prefillDone: view.prefillDone,
 			prefillTotal: view.prefillTotal,
-			ctxDone: 0,
-			ctxTotal: 0,
+			genDone: 0,
 			source: "engine",
 			engineName: view.name,
 		});
@@ -353,8 +351,7 @@ function engineSnapshot(): SpeedSnapshot {
 		engineName: view.reachable ? view.name : "",
 		prefillDone: view.prefillDone,
 		prefillTotal: view.prefillTotal,
-		ctxDone: 0,
-		ctxTotal: 0,
+		genDone: 0,
 	});
 }
 
@@ -926,6 +923,7 @@ const BOOL_KEYS_LIST: readonly BoolKey[] = [
 	"showPp",
 	"showCacheHit",
 	"showPpTokens",
+	"showTgTokens",
 	"showAuto",
 	"showCwd",
 	"showMcp",
