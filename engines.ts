@@ -113,6 +113,30 @@ export interface EngineView {
 	note: string;
 }
 
+/**
+ * Should the finished request's averages still win over the engine's live rates?
+ *
+ * Right after a response ends, the engine keeps calling itself busy for a poll or
+ * two, and during that moment the finished response's own average is the better
+ * number to show. That preference has to expire, because an activity can start
+ * without the engine ever looking idle in between - which is exactly what a
+ * compaction does, firing the moment the turn ends. Compared against the start of
+ * the activity, a busy timestamp from the previous request says "same activity"
+ * forever, and the bar sits on the old averages through the whole summary: its
+ * prefill and its generation both. So the frozen numbers win only briefly.
+ */
+export function preferFrozen(
+	fin: EngineRequestNumbers | null,
+	streaming: boolean,
+	busySince: number,
+	now: number,
+	windowMs = FROZEN_PREFERENCE_MS,
+): boolean {
+	if (!fin || fin.tg <= 0 || streaming) return false;
+	if (busySince > fin.resolvedMs) return false; // a genuinely newer activity
+	return now - fin.resolvedMs <= windowMs;
+}
+
 const REQUEST_TIMEOUT_MS = 700;
 /** How long we keep looking for a finished request to attribute. */
 const ATTRIBUTION_POLL_LIMIT = 8;
@@ -142,6 +166,8 @@ const IDLE_SERIES_CLEAR_MS = 4000;
  *  finished request's record just after the stream closes, and the exact averages
  *  on the bar depend on reading it promptly. */
 const FINISHED_LOOKUP_MS = 4000;
+/** How long a finished response's averages outrank the engine's live rates. */
+const FROZEN_PREFERENCE_MS = 2500;
 
 export class EngineProbe {
 	private base = "";

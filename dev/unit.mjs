@@ -73,6 +73,7 @@ console.log('weighted counted after 10 chunks:', Math.round(e2.counted), '(expec
 console.log('ratio test OK:', Math.abs(e2.learnedTokensPerEvent - 2) < 0.01 && Math.abs(e2.counted - 20) < 1);
 // --- the tgWindowMs average, on both speed sources --------------------------
 const enginesMod = await import('./engines.ts');
+const { preferFrozen } = enginesMod;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // Measured path (pi-side timing): 20 t/s for one second, then 100 t/s for one
@@ -193,6 +194,30 @@ function finishedEngine() {
   p.stop();
   server.close();
 }
+
+// --- the frozen-versus-live decision (the compaction freeze) -----------------
+const T = 1_000_000; // an arbitrary "now" in ms
+const rec = (over) => ({ tg: 40, pp: 300, ttftS: 1, out: 100, promptFresh: 10, genSeconds: 2.5, id: "r_1", startMs: T - 30000, resolvedMs: T, ...over });
+
+// The compaction case: the summary request starts with no idle gap, so the
+// activity timestamp still belongs to the previous request. Before the fix the
+// frozen numbers won here forever - through the summary's prefill and its decode.
+const compactionAt = (msAfter) => preferFrozen(rec({}), false, T - 30000, T + msAfter);
+console.log("frozen wins 0.5 s after the response:", compactionAt(500) === true);
+console.log("frozen wins 2 s after the response  :", compactionAt(2000) === true);
+console.log("live wins 3 s in (compaction runs)  :", compactionAt(3000) === false);
+console.log("live wins 15 min in                 :", compactionAt(900000) === false);
+// A genuinely newer activity must never be masked by an old finished record.
+console.log("newer activity always live          :", preferFrozen(rec({}), false, T + 50, T + 100) === false);
+// While pi's own message streams, the live rates are shown regardless.
+console.log("streaming pi message shows live     :", preferFrozen(rec({ resolvedMs: T + 999 }), true, T - 30000, T + 100) === false);
+// No finished record yet: nothing to prefer.
+console.log("no finished record: live            :", preferFrozen(null, false, T - 1000, T) === false);
+console.log("frozen/live rule OK:",
+  compactionAt(500) && compactionAt(2000) && !compactionAt(3000) && !compactionAt(900000)
+  && !preferFrozen(rec({}), false, T + 50, T + 100)
+  && !preferFrozen(rec({ resolvedMs: T + 999 }), true, T - 30000, T + 100)
+  && !preferFrozen(null, false, T - 1000, T));
 
 // --- the context piece and the speed source marker (visible format) ----------
 const settingsMod = await import('./settings.ts');

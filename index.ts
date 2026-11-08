@@ -47,7 +47,7 @@ import {
 import { truncateToWidth, visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
 
 import { SpeedEngine } from "./engine.js";
-import { EngineProbe } from "./engines.js";
+import { EngineProbe, preferFrozen, type EngineRequestNumbers } from "./engines.js";
 import {
 	assembleLine,
 	BOLT,
@@ -288,7 +288,7 @@ function engineSnapshot(): SpeedSnapshot {
 	// a poll or two after a response ends the engine still calls itself busy, and
 	// then the finished response's own average is the better number to show.
 	const fin = view.final;
-	const frozeThisActivity = !!fin && fin.tg > 0 && !measured.streaming && view.busySince <= fin.resolvedMs;
+	const frozeThisActivity = preferFrozen(fin, measured.streaming, view.busySince, Date.now());
 	if (view.busy && hasLiveRates && !frozeThisActivity) {
 		const ours = measured.streaming; // pi's own message is the one in flight
 		// A rate that is not happening this second shows the engine's own
