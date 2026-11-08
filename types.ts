@@ -49,6 +49,14 @@ export interface SpeedSnapshot {
 	 *  prompt (0 = the engine does not report it, so nothing is shown). */
 	prefillDone: number;
 	prefillTotal: number;
+	/**
+	 * Work in progress to show in place of the context figure while the engine is
+	 * busy with something that is not pi's own message - a compaction, another
+	 * client. pi cannot know how far such a request has got; only the engine can.
+	 * total = 0 means "show pi's own context figure".
+	 */
+	ctxDone: number;
+	ctxTotal: number;
 	/** Where tg/pp/ttft came from: the engine itself, or our own measurement. */
 	source: "engine" | "measured";
 	/** Engine the numbers came from ("" when unknown or measured). */

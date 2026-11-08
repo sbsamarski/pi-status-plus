@@ -278,16 +278,28 @@ console.log(
 		: "FAIL",
 );
 
-// The prefill's own progress, in the same shape as the context figure on the line.
+// While the engine works on something that is not pi's message, the progress pair
+// belongs to the context item, and the PP item stands alone: one pair per line.
+const ppLine = clean(prefillRaw);
 console.log(
-	"  PP carries prompt progress:",
-	/PP [\d.]+ t\/s, 900\/1\.2k, 75\.0%/.test(clean(prefillRaw)) ? "PASS" : `FAIL: ${clean(prefillRaw)}`,
+	"  progress pair shows once, in the context item:",
+	(ppLine.match(/900\/1\.2k, 75\.0%/g) ?? []).length === 1 && /PP \d+ t\/s(?!\d)/.test(ppLine)
+		? "PASS"
+		: `FAIL: ${ppLine}`,
 );
 commands.get("status-plus").handler("showPpTokens off", ctx);
 await new Promise((resolve) => setTimeout(resolve, 400));
+// With the option off the PP item must stand alone. The same figures may still
+// appear in the context item, because while the engine works on something that is
+// not pi's message that is where the engine's progress belongs.
+const ppOffLine = clean(footerActive(200).join(" | "));
 console.log(
 	"  prompt progress is optional:",
-	!/900\/1\.2k/.test(clean(footerActive(160).join(" | "))) ? "PASS" : "FAIL",
+	/PP [\d.]+ t\/s(?!\d)/.test(ppOffLine) && !/PP [\d.]+ t\/s, 900/.test(ppOffLine) ? "PASS" : `FAIL: ${ppOffLine}`,
+);
+console.log(
+	"  context item carries the engine pair:",
+	/\u2022 900\/1\.2k, 75\.0%/.test(ppOffLine) || /900\/1\.2k, 75\.0%/.test(ppOffLine) ? "PASS" : `FAIL: ${ppOffLine}`,
 );
 commands.get("status-plus").handler("showPpTokens on", ctx);
 

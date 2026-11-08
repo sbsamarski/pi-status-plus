@@ -65,6 +65,15 @@ Line by line, here is what you are looking at.
 
 **The progress is only shown when the counter is really counting.** A slot counts the tokens it took from the cache as already read, so on a warm session the counter starts at the whole prompt — `227.3k/227.3k, 100.0%` from the first instant, which measures nothing. The bar therefore refuses the figures in two cases: when the read reports itself complete before it has meaningfully started, and when the progress number lands on what the conversation already holds (within a small tolerance), because the prompt of a live session is that session plus a little, so a counter sitting there is the cached total rather than a position inside the read. The one case where the second test fires on real data is the last moment of a cold load of the whole session — and that read is over a heartbeat later, so nothing useful is lost.
 
+**During work the engine does on its own, the context figure carries its progress.** When the engine is busy with something that is not pi's message — an autocompaction, a session summary, another client on the same server — pi's own context number cannot move, because the transcript is not changing here. Showing it would put a still figure where something is clearly happening. So the first item of the pair becomes what the engine reports, and it follows the two halves of a request:
+
+```
+• 60.2k/200.4k, 30.0% ⚡ PP 412 t/s      while the prompt is being read: tokens read of that prompt
+• 6.2k/48.0k, 12.9%  ⚡ TG 31.7 t/s      while the answer is being written: tokens generated of its limit
+```
+
+The totals come from the engine, not from a guess: the read total is the prompt's own size (`prompt_tokens`), and the write total is the limit that request was given (`max_tokens`) — the same two numbers basalt prints in its own log line `[server] live | s1 tg=6171/48000 31.7t/s`. When pi's own answer is streaming, the item goes back to the real context figure (`253.7k/458.8k, 55.3%`), which is the more useful number there. The prompt's progress is then shown after `PP` as before, and never in both places on one line.
+
 **No bullet in front of the bolts.** Each speed already leads with an icon, so the bar puts a plain space between the context figure and the first speed — an icon and a bullet in front of the same word is one separator too many. Turn `showIcon` off and the bullet comes back, because then something has to divide the two groups.
 
 **White means "now", grey means "the average it left behind".** Each rate is white while that activity is

@@ -226,6 +226,8 @@ function measuredSnapshot(): SpeedSnapshot {
 		// can say, so the measured path shows no progress.
 		prefillDone: 0,
 		prefillTotal: 0,
+		ctxDone: 0,
+		ctxTotal: 0,
 		source: "measured",
 		engineName: "",
 	};
@@ -313,6 +315,12 @@ function engineSnapshot(): SpeedSnapshot {
 			ppLive: view.prefilling && view.livePp > 0,
 			prefillDone: view.prefillDone,
 			prefillTotal: view.prefillTotal,
+			// While the engine works on something that is not pi's message, pi's own
+			// context figure cannot move - the transcript is not changing here - so the
+			// engine's progress is the only honest pair to show: tokens read of the
+			// prompt during the read, tokens generated of the limit during the answer.
+			ctxDone: ours ? 0 : view.progressDone,
+			ctxTotal: ours ? 0 : view.progressTotal,
 			source: "engine",
 			engineName: view.name,
 		});
@@ -332,6 +340,8 @@ function engineSnapshot(): SpeedSnapshot {
 			ppLive: false,
 			prefillDone: view.prefillDone,
 			prefillTotal: view.prefillTotal,
+			ctxDone: 0,
+			ctxTotal: 0,
 			source: "engine",
 			engineName: view.name,
 		});
@@ -343,6 +353,8 @@ function engineSnapshot(): SpeedSnapshot {
 		engineName: view.reachable ? view.name : "",
 		prefillDone: view.prefillDone,
 		prefillTotal: view.prefillTotal,
+		ctxDone: 0,
+		ctxTotal: 0,
 	});
 }
 

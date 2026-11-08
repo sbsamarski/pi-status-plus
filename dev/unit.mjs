@@ -239,6 +239,27 @@ console.log('context format OK:', parts.context === '106.4k/260.0k, 40.9%'
 console.log('stats line:', mod.statsPartsPlain(parts));
 console.log('auto kept as its own item:', mod.statsPartsPlain(parts).endsWith(', auto'));
 
+// During a compaction (or any work the engine does that is not pi's message) the
+// context item carries the engine's progress instead of pi's figure, which cannot
+// move while a prompt pi did not build is being read.
+const compStats = { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0, cacheHitRate: undefined,
+  contextTokens: 250000, realContextTokens: 106400, contextWindow: 260000, autoCompact: false };
+const engParts = (ctxDone, ctxTotal) => mod.buildStatsParts({
+  stats: compStats, settings: view({ showAuto: false }), theme,
+  speed: { tg: 0, pp: 0, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine',
+           engineName: 'basalt', tgLive: false, ppLive: false, prefillDone: 0, prefillTotal: 0, ctxDone, ctxTotal },
+});
+const readingPair = engParts(60200, 200400).context;
+const writingPair = engParts(6171, 48000).context;
+const piOwnPair = engParts(0, 0).context;
+console.log('compaction, reading  :', JSON.stringify(readingPair));
+console.log('compaction, writing  :', JSON.stringify(writingPair));
+console.log('nothing foreign      :', JSON.stringify(piOwnPair));
+console.log('engine progress replaces the context figure OK:',
+  readingPair === '60.2k/200.4k, 30.0%'
+  && writingPair === '6.2k/48.0k, 12.9%'
+  && piOwnPair === '106.4k/260.0k, 40.9%');
+
 // CH (cache-hit rate) is optional now.
 const chData = (showCacheHit) => ({
   stats: { input: 1000, output: 200, cacheRead: 90000, cacheWrite: 0, cost: 0, cacheHitRate: 98.6,
@@ -259,7 +280,7 @@ const speedData = (over, settingsOver) => ({
 });
 const ink = { fg: (role, text) => `[${role}]${text}` }; // keeps the colour role visible
 const rateFrame = (over, settingsOver, statsOver) => ({
-  speed: { tg: 51.3, pp: 103.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine', engineName: 'basalt', tgLive: false, ppLive: false, prefillDone: 0, prefillTotal: 0, ...over },
+  speed: { tg: 51.3, pp: 103.4, ttft: 0, statsTokens: 0, statsSeconds: 0, streaming: false, source: 'engine', engineName: 'basalt', tgLive: false, ppLive: false, prefillDone: 0, prefillTotal: 0, ctxDone: 0, ctxTotal: 0, ...over },
   settings: view({ showIcon: true, ...settingsOver }),
   stats: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, cacheHitRate: undefined,
            contextTokens: 225000, realContextTokens: 225000, contextWindow: 458800, autoCompact: false, ...statsOver },

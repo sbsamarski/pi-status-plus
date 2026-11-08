@@ -120,7 +120,15 @@ export function buildStatsParts(data: FooterFrameData): StatsParts {
 	// The number shown is the one the SERVER holds (elided transcript), not pi's
 	// raw-transcript estimate - with elision the two differ by 100k tokens and
 	// more, and the window limit applies to the server's figure.
-	if (stats.contextTokens !== null || (stats.realContextTokens ?? 0) > 0) {
+	// An engine that is working on something other than pi's message reports its own
+	// progress, and that is the pair worth showing: pi's figure cannot move while a
+	// compaction reads a prompt it did not build.
+	const eng = data.speed;
+	if ((eng?.ctxTotal ?? 0) > 0 && (eng?.ctxDone ?? 0) > 0) {
+		const pct = (eng!.ctxDone / eng!.ctxTotal) * 100;
+		context = `${formatTokensCtx(eng!.ctxDone)}/${formatTokensCtx(eng!.ctxTotal)}, ${contextPercentColored(data.theme, pct)}`;
+		contextColored = context;
+	} else if (stats.contextTokens !== null || (stats.realContextTokens ?? 0) > 0) {
 		const real = (stats.realContextTokens ?? 0) > 0 ? stats.realContextTokens! : stats.contextTokens!;
 		const pct = stats.contextWindow > 0 ? (real / stats.contextWindow) * 100 : 0;
 		context = `${formatTokensCtx(real)}/${formatTokensCtx(stats.contextWindow)}, ${contextPercentColored(data.theme, pct)}`;
@@ -188,7 +196,11 @@ export function buildSpeedSegment(data: FooterFrameData): string {
 		// few tokens per second, and the decimal place only pretends to be news.
 		let text = `${label("PP ")}${speedTextInt(speed.pp)} t/s`;
 		const done = Math.min(speed.prefillDone, speed.prefillTotal);
-		if (s.showPpTokens && speed.ppLive === true && progressIsHonest(speed, done, data.stats)) {
+		// While the engine works on something that is not pi's message, the same pair
+		// already leads the line as the context figure - showing it a second time
+		// after PP would say the same thing twice in one line.
+		const pairOnBarAlready = (speed.ctxTotal ?? 0) > 0 && (speed.ctxDone ?? 0) > 0;
+		if (s.showPpTokens && !pairOnBarAlready && speed.ppLive === true && progressIsHonest(speed, done, data.stats)) {
 			// How far the engine has got through the prompt, in the shape of the
 			// context figure on the same line. Only while the read runs, and only when
 			// the counter is really counting - see progressIsHonest.
